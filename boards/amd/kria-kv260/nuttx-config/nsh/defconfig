@@ -1,0 +1,83 @@
+#
+# NuttX configuration for the AMD Kria KV260 R5F running PX4 via Linux remoteproc.
+#
+# Derived from platforms/nuttx/NuttX/nuttx/boards/arm/zynqr5/kria-kv260/configs/nsh/defconfig
+# with additions required by the PX4 platform layer.
+#
+# GIC pre-condition (Phase 2): run boards/amd/kria-kv260/scripts/xmpu_config.sh on the
+# APU before starting the R5F firmware via remoteproc, to grant GICC access.
+# Until Phase 2+3 are complete the board runs with the polled TTC timer.
+#
+CONFIG_ARCH="arm"
+CONFIG_ARCH_BOARD_CUSTOM=y
+CONFIG_ARCH_BOARD_CUSTOM_DIR="../../../../boards/amd/kria-kv260/nuttx-config"
+CONFIG_ARCH_BOARD_CUSTOM_DIR_RELPATH=y
+CONFIG_ARCH_BOARD_CUSTOM_NAME="px4"
+CONFIG_ARCH_CHIP="zynqr5"
+CONFIG_ARCH_CHIP_ZYNQR5=y
+CONFIG_ARCH_INTERRUPTSTACK=2048
+CONFIG_ARCH_LOWVECTORS=y
+CONFIG_ARCH_STACKDUMP=y
+CONFIG_ARMV7R_TOOLCHAIN_GNU_EABI=y
+
+# Board control — required by PX4's boardctl(BOARDIOC_INIT) call
+CONFIG_BOARDCTL=y
+CONFIG_BOARD_LATE_INITIALIZE=y
+
+# C++ support — PX4 modules are C++
+CONFIG_HAVE_CXX=y
+CONFIG_HAVE_CXXINITIALIZE=y
+
+# NuttX shell and built-in app support
+CONFIG_BUILTIN=y
+CONFIG_NSH_LIBRARY=y
+CONFIG_NSH_BUILTIN_APPS=y
+CONFIG_NSH_ARCHINIT=y
+
+# Filesystem support needed by PX4 (ROMFS for init scripts, procfs for diagnostics)
+CONFIG_FS_BINFS=y
+CONFIG_FS_PROCFS=y
+CONFIG_FS_PROCFS_REGISTER=y
+CONFIG_FS_ROMFS=y
+
+# POSIX / scheduler features used by PX4 work queues and tasks
+CONFIG_FDCLONE_STDIO=y
+CONFIG_POSIX_TIMERS=y
+CONFIG_PREALLOC_TIMERS=32
+CONFIG_PRIORITY_INHERITANCE=y
+CONFIG_SCHED_HPWORK=y
+CONFIG_SCHED_LPWORK=y
+CONFIG_SCHED_WAITPID=y
+CONFIG_SCHED_WORKQUEUE=y
+
+# Memory
+CONFIG_RAM_SIZE=0x100000
+CONFIG_RAM_START=0x3ED00000
+
+# Stack sizes — idle needs more room for PX4 init path
+CONFIG_IDLETHREAD_STACKSIZE=8192
+
+# Scheduler
+CONFIG_RR_INTERVAL=200
+
+# Debugging
+CONFIG_DEBUG_FEATURES=y
+CONFIG_DEBUG_SYMBOLS=y
+CONFIG_EXPERIMENTAL=y
+
+# Flat binary output for remoteproc ELF packaging
+CONFIG_RAW_BINARY=y
+
+# TTC timer (system tick — polled until Phase 3, interrupt-driven after)
+CONFIG_ZYNQR5_TTC1=y
+CONFIG_ZYNQR5_TTC_COUNTER0=y
+CONFIG_ZYNQR5_TTC_FREQ=100000000
+
+# UARTs
+CONFIG_ZYNQR5_UART0=y
+CONFIG_ZYNQR5_UART1=y
+CONFIG_ZYNQR5_UART0_CONSOLE=y
+CONFIG_UART0_RXBUFSIZE=256
+CONFIG_UART0_TXBUFSIZE=512
+CONFIG_UART1_RXBUFSIZE=256
+CONFIG_UART1_TXBUFSIZE=512

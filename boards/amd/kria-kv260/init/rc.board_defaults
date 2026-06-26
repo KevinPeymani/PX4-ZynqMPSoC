@@ -1,0 +1,10 @@
+#!/bin/sh
+#
+# AMD Kria KV260 R5F — board-specific parameter defaults
+#
+# These are applied once at first boot (or after param reset).
+# Battery ADC is not connected on the R5F side; set divisors to zero
+# so the battery estimator doesn't generate bogus voltage readings.
+#
+param set-default BAT1_V_DIV 0.0
+param set-default BAT1_A_PER_V 0.0
