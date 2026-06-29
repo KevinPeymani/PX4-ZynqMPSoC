@@ -4,10 +4,6 @@
 # Derived from platforms/nuttx/NuttX/nuttx/boards/arm/zynqr5/kria-kv260/configs/nsh/defconfig
 # with additions required by the PX4 platform layer.
 #
-# GIC pre-condition (Phase 2): run boards/amd/kria-kv260/scripts/xmpu_config.sh on the
-# APU before starting the R5F firmware via remoteproc, to grant GICC access.
-# Until Phase 2+3 are complete the board runs with the polled TTC timer.
-#
 CONFIG_ARCH="arm"
 CONFIG_ARCH_BOARD_CUSTOM=y
 CONFIG_ARCH_BOARD_CUSTOM_DIR="../../../../boards/amd/kria-kv260/nuttx-config"
@@ -33,6 +29,7 @@ CONFIG_BUILTIN=y
 CONFIG_NSH_LIBRARY=y
 CONFIG_NSH_BUILTIN_APPS=y
 CONFIG_NSH_ARCHINIT=y
+CONFIG_SYSTEM_NSH=y
 
 # Filesystem support needed by PX4 (ROMFS for init scripts, procfs for diagnostics)
 CONFIG_FS_BINFS=y
@@ -68,7 +65,7 @@ CONFIG_EXPERIMENTAL=y
 # Flat binary output for remoteproc ELF packaging
 CONFIG_RAW_BINARY=y
 
-# TTC timer (system tick — polled until Phase 3, interrupt-driven after)
+# TTC timer (system tick)
 CONFIG_ZYNQR5_TTC1=y
 CONFIG_ZYNQR5_TTC_COUNTER0=y
 CONFIG_ZYNQR5_TTC_FREQ=100000000
@@ -77,7 +74,9 @@ CONFIG_ZYNQR5_TTC_FREQ=100000000
 CONFIG_ZYNQR5_UART0=y
 CONFIG_ZYNQR5_UART1=y
 CONFIG_ZYNQR5_UART0_CONSOLE=y
+CONFIG_UART0_BAUD=115200
 CONFIG_UART0_RXBUFSIZE=256
 CONFIG_UART0_TXBUFSIZE=512
+CONFIG_UART1_BAUD=115200
 CONFIG_UART1_RXBUFSIZE=256
 CONFIG_UART1_TXBUFSIZE=512
