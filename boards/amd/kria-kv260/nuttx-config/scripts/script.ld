@@ -37,7 +37,12 @@ MEMORY
      * remoteproc maps p_paddr=0x0 to APU physical 0xFFE00000. */
     atcm (rwx) : ORIGIN = 0x00000000, LENGTH = 64K
 
-    ddr  (rwx) : ORIGIN = 0x3ED00000, LENGTH = 0x00100000
+    /* Linux DT carveout rproc@3ed00000 is 256 KB.
+     * Vrings and message buffers live in separate DT nodes above 0x3ED40000:
+     *   0x3ED40000  rpu0vdev0vring0  16 KB
+     *   0x3ED44000  rpu0vdev0vring1  16 KB
+     *   0x3ED48000  rpu0vdev0buffer  1 MB  */
+    ddr  (rwx) : ORIGIN = 0x3ED00000, LENGTH = 0x00040000
 }
 
 ENTRY(_tcm_start)
@@ -115,6 +120,15 @@ SECTIONS
         _edata = ABSOLUTE(.);
     } > ddr
 
+    /* Resource table consumed by Linux remoteproc to discover vrings.
+     * KEEP() prevents --gc-sections from discarding the section; Linux
+     * finds it by ELF section name ".resource_table". */
+
+    .resource_table :
+    {
+        KEEP(*(.resource_table))
+    } > ddr
+
     .bss :
     {
         _sbss = ABSOLUTE(.);
@@ -125,7 +139,8 @@ SECTIONS
         _ebss = ABSOLUTE(.);
     } > ddr
 
-    /* Remainder of the carveout is available as NuttX heap */
+    /* Heap top: end of 256 KB ELF carveout.  Vrings/buffers are in
+     * separate DT nodes above this address — do not encroach on them. */
 
     g_idle_topstack = ORIGIN(ddr) + LENGTH(ddr);
 

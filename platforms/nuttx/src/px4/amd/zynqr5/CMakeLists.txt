@@ -33,12 +33,7 @@
 
 add_subdirectory(board_critmon)
 add_subdirectory(version)
+add_subdirectory(hrt)
 
-# Phase 4 will add:
-#   add_subdirectory(hrt)        — TTC2 1 MHz HRT driver
-#   add_subdirectory(board_reset)
-
-# arch_hrt and arch_board_reset are consumed by nuttx_arch INTERFACE deps.
-# Until Phase 4, provide empty INTERFACE libraries so the link succeeds.
-add_library(arch_hrt INTERFACE)
+# arch_board_reset: no-op stub until Phase 5 adds board reset support.
 add_library(arch_board_reset INTERFACE)
