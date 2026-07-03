@@ -137,9 +137,10 @@ if(CONFIG_NET)
 	target_link_libraries(nuttx_fs INTERFACE nuttx_net)
 endif()
 
-if(CONFIG_OPENAMP)
-	list(APPEND nuttx_libs nuttx_openamp)
-endif()
+# nuttx_openamp is NOT appended to nuttx_libs here — it is included via
+# --whole-archive inside the --start-group block below to avoid duplicate
+# symbol errors when CMake INTERFACE expansion re-adds libdrivers.a outside
+# the group.  See the CONFIG_OPENAMP block in the target_link_libraries call.
 
 file(RELATIVE_PATH PX4_BINARY_DIR_REL ${CMAKE_CURRENT_BINARY_DIR} ${PX4_BINARY_DIR})
 
@@ -383,6 +384,15 @@ else()
 
 		-Wl,--start-group
 			${nuttx_libs}
+			# --whole-archive forces all libopenamp.a symbols into the global
+			# table inside the group.  libdrivers.a (in nuttx_libs) references
+			# openamp symbols; CMake INTERFACE expansion also causes libdrivers.a
+			# to reappear outside this group.  Loading openamp here once (inside
+			# the group) satisfies both the intra-group and post-group references
+			# without linking libopenamp.a a second time.
+			$<$<BOOL:${CONFIG_OPENAMP}>:-Wl,--whole-archive>
+			$<$<BOOL:${CONFIG_OPENAMP}>:${PX4_BINARY_DIR}/NuttX/nuttx/openamp/libopenamp.a>
+			$<$<BOOL:${CONFIG_OPENAMP}>:-Wl,--no-whole-archive>
 		-Wl,--end-group
 
 		m
@@ -394,20 +404,6 @@ else()
 	endif()
 
 	target_link_libraries(px4 PRIVATE ${module_libraries})
-
-	if(CONFIG_OPENAMP)
-		# libdrivers.a(rptun.o) references openamp symbols.  The
-		# nuttx_c⇆nuttx_drivers circular INTERFACE expansion causes libdrivers.a
-		# to reappear outside the primary --start-group, AFTER any group that
-		# contains libopenamp.a.  --whole-archive loads ALL of libopenamp.a
-		# unconditionally at this point; the symbols enter the global table and
-		# remain available when the outside-group libdrivers.a is processed later.
-		target_link_libraries(px4 PRIVATE
-			-Wl,--whole-archive
-			${PX4_BINARY_DIR}/NuttX/nuttx/openamp/libopenamp.a
-			-Wl,--no-whole-archive
-		)
-	endif()
 
 	if(CONFIG_ARCH_CHIP_ZYNQR5)
 		# px4_task_spawn_cmd lives in px4_layer but is referenced by px4_work_queue.
