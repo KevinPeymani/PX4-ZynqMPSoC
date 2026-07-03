@@ -198,21 +198,3 @@ void hrt_init(void)
 	sq_init(&g_callout_queue);
 }
 
-/* up_perf_* stubs required by CONFIG_RPTUN_PING.
- * Phase 4 will replace these with TTC2 cycle-counter readings. */
-
-uint32_t up_perf_getfreq(void)
-{
-	return 1000000u; /* 1 MHz nominal; avoids div-by-zero in rptun_ping */
-}
-
-uint32_t up_perf_gettime(void)
-{
-	return (uint32_t)hrt_absolute_time();
-}
-
-void up_perf_convert(uint32_t elapsed, struct timespec *ts)
-{
-	ts->tv_sec  = elapsed / 1000000u;
-	ts->tv_nsec = (elapsed % 1000000u) * 1000u;
-}
