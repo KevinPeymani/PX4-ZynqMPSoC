@@ -119,7 +119,9 @@
                 "variant": "cpp",
                 "vector": "cpp",
                 "Jenkinsfile*": "groovy",
-                "*.sdf": "xml"
+                "*.sdf": "xml",
+                "*.conf": "bitbake",
+                "*.inc": "bitbake"
         },
         "search.exclude": {
                 "${workspaceFolder}/build": true
@@ -129,4 +131,12 @@
         "yaml.schemas": {
                 "${workspaceFolder}/validation/module_schema.yaml": "${workspaceFolder}/src/modules/*/module.yaml"
         },
+        "python.autoComplete.extraPaths": [
+                "${workspaceFolder}/sources/poky/bitbake/lib",
+                "${workspaceFolder}/sources/poky/meta/lib"
+        ],
+        "python.analysis.extraPaths": [
+                "${workspaceFolder}/sources/poky/bitbake/lib",
+                "${workspaceFolder}/sources/poky/meta/lib"
+        ],
 }
