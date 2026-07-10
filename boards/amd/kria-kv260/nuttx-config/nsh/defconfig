@@ -50,10 +50,23 @@ CONFIG_SCHED_WORKQUEUE=y
 
 # Memory
 CONFIG_RAM_SIZE=0x100000
-CONFIG_RAM_START=0x3ED00000
+CONFIG_RAM_START=0x1ED00000
 
-# Stack sizes — idle needs more room for PX4 init path
-CONFIG_IDLETHREAD_STACKSIZE=8192
+# Two heap regions:
+#   Region 0: [g_idle_topstack, 0x1ED3FE00)  ~44 KB  — code/heap below vring gap
+#   Region 1: [0x1ED48000,      0x1EE00000)  ~736 KB — after both OpenAMP vrings
+# The vrings live at 0x1ED40000 (vring0, 16 KB) and 0x1ED44000 (vring1, 16 KB).
+CONFIG_MM_REGIONS=2
+
+# Stack sizes
+# Idle task only executes up_idle() -> WFI; 2 KB is sufficient.
+# AppBringUp kthread runs board_late_initialize -> zynqr5_rptun_initialize ->
+# rptun_initialize (OpenAMP/virtio init chain).  Observed stack depth with
+# CONFIG_DEBUG_NOOPT: ~25 KB.  64 KB gives 2.5x headroom for future growth.
+CONFIG_IDLETHREAD_STACKSIZE=2048
+CONFIG_BOARD_INITTHREAD_STACKSIZE=65536
+CONFIG_INIT_STACKSIZE=16384
+CONFIG_SYSTEM_NSH_STACKSIZE=8192
 
 # Scheduler
 CONFIG_RR_INTERVAL=200

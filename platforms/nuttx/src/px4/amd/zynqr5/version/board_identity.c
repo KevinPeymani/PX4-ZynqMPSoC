@@ -10,7 +10,7 @@ static uint32_t chip_uuid[PX4_CPU_UUID_WORD32_LENGTH] = {
 };
 
 #define SWAP_UINT32(x) (((x) >> 24) | (((x) & 0x00FF0000U) >> 8) | \
-                        (((x) & 0x0000FF00U) << 8) | ((x) << 24))
+			(((x) & 0x0000FF00U) << 8) | ((x) << 24))
 
 #define CPU_UUID_BYTE_FORMAT_ORDER {3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8}
 

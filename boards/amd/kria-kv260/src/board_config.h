@@ -22,16 +22,15 @@
 
 /* Serial port assignments ***************************************************
  *
- * /dev/ttyS0 → UART0 (0xFF000000) — TEL1, future MAVLink (Phase 6)
- * /dev/ttyS1 → UART1 (0xFF010000) — NSH console / debug
+ * /dev/ttyS0 → UART0 (0xFF000000) — NSH console / debug (ttyUSB0)
+ * /dev/ttyS1 → UART1 (0xFF010000) — available for MAVLink / Linux side (ttyUSB1)
  *
- * NuttX enumerates UARTs in the order they appear in Make.defs / CMakeLists.
- * The console UART (UART1) is typically /dev/console and not exposed as ttyS.
- * Map MAVLink to /dev/ttyS0 (UART0); console stays on UART1.
+ * UART0 is used for the R5 NSH console to avoid conflicting with U-Boot and
+ * Linux which both use UART1.  ttyUSB0 = R5, ttyUSB1 = A53.
  */
 
-#define SERIAL_PORT_CONSOLE   "/dev/ttyS1"   /* UART1 — debug/NSH */
-#define SERIAL_PORT_TEL1      "/dev/ttyS0"   /* UART0 — MAVLink */
+#define SERIAL_PORT_CONSOLE   "/dev/ttyS0"   /* UART0 — debug/NSH */
+#define SERIAL_PORT_TEL1      "/dev/ttyS1"   /* UART1 — MAVLink */
 
 /* HRT (High-Resolution Timer) ***********************************************
  *
