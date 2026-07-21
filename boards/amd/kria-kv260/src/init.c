@@ -41,16 +41,25 @@ extern uintptr_t g_idle_topstack;
  *   Initialize the primary NuttX heap region (Region 0).  A second region
  *   is added by arm_addregion() below.
  *
- *   Layout (the *actual* 256 KB rproc@1ed00000 remoteproc carveout, per the
- *   live Linux devicetree — NOT a 1 MB carveout; the 1 MB figure belongs to
- *   the separate rpu0vdev0buffer DT node, confirmed below):
+ *   Layout (the *actual* 2 MB rproc@1ed00000 remoteproc carveout, per the
+ *   live Linux devicetree — grown from 256 KB on 2026-07-21 for PX4 module
+ *   headroom; NOT the separate 1 MB rpu0vdev0buffer DT node, confirmed
+ *   below):
  *     [.text/.data/.bss]  : 0x1ED00000 .. _ebss
  *     [idle stack]        : [_ebss, g_idle_topstack)       (2 KB)
- *     [heap region 0]     : [g_idle_topstack, 0x1ED3FE00)  (~44 KB)
- *     [debug scratchpad]  : [0x1ED3FE00, 0x1ED3FFFF]       (512 B)
- *     [vring0 TX]         : [0x1ED40000, 0x1ED44000)       (16 KB, DT fixed)
- *     [vring1 RX]         : [0x1ED44000, 0x1ED48000)       (16 KB, DT fixed)
- *     [rpu0vdev0buffer]   : [0x1ED48000, 0x1EE48000)       (1 MB, DT fixed,
+ *     [heap region 0]     : [g_idle_topstack, 0x1EEFFE00)  (1876876 B =
+ *                                                            ~1.79 MB,
+ *                                                            confirmed via
+ *                                                            the 0x1EEFFE04
+ *                                                            breadcrumb on
+ *                                                            hardware
+ *                                                            2026-07-21; was
+ *                                                            ~44 KB before
+ *                                                            the grow)
+ *     [debug scratchpad]  : [0x1EEFFE00, 0x1EEFFFFF]       (512 B)
+ *     [vring0 TX]         : [0x1EF00000, 0x1EF04000)       (16 KB, DT fixed)
+ *     [vring1 RX]         : [0x1EF04000, 0x1EF08000)       (16 KB, DT fixed)
+ *     [rpu0vdev0buffer]   : [0x1EF08000, 0x1F008000)       (1 MB, DT fixed,
  *                                                            LIVE rpmsg
  *                                                            message-buffer
  *                                                            pool — NuttX
@@ -65,7 +74,7 @@ extern uintptr_t g_idle_topstack;
 void up_allocate_heap(void **heap_start, size_t *heap_size)
 {
 	uintptr_t start = g_idle_topstack; /* _ebss + CONFIG_IDLETHREAD_STACKSIZE */
-	uintptr_t end = 0x1ED3FE00u;       /* debug scratch area starts here */
+	uintptr_t end = 0x1EEFFE00u;       /* debug scratch area starts here */
 
 	uintptr_t size = (end > start) ? (end - start) : 0;
 
@@ -74,11 +83,11 @@ void up_allocate_heap(void **heap_start, size_t *heap_size)
 
 	/* DBG (2026-07-21, Task B): log the actual values fed to kumm_initialize()
 	 * so they can be compared on hardware against the intended constant
-	 * 0x1ED3FE00 boundary.  0x1ED3FE00/04 are unused by every other
-	 * breadcrumb in this codebase (verified via `grep -rn 1ED3FE`) and sit
+	 * 0x1EEFFE00 boundary.  0x1EEFFE00/04 are unused by every other
+	 * breadcrumb in this codebase (verified via `grep -rn 1EEFFE`) and sit
 	 * inside the debug scratchpad itself, not the heap. */
-	*((volatile uint32_t *)0x1ED3FE00u) = (uint32_t)start;
-	*((volatile uint32_t *)0x1ED3FE04u) = (uint32_t)size;
+	*((volatile uint32_t *)0x1EEFFE00u) = (uint32_t)start;
+	*((volatile uint32_t *)0x1EEFFE04u) = (uint32_t)size;
 	__asm__ volatile("dsb sy" ::: "memory");
 }
 
@@ -90,13 +99,20 @@ void up_allocate_heap(void **heap_start, size_t *heap_size)
  *   Called by arm_initialize() when CONFIG_MM_REGIONS > 1.
  *
  *   Region 1 previously lived at [0x1ED48000, 0x1EE00000) — entirely inside
- *   the live Linux DT reserved-memory node rpu0vdev0buffer@1ed48000
+ *   what was then the live Linux DT reserved-memory node rpu0vdev0buffer
  *   (0x1ED48000-0x1EE48000, 1 MB, no-map), which is the actual OpenAMP/
  *   rpmsg shared message-buffer pool that Linux and this R5F actively
  *   exchange rpmsg traffic through via rptun/libmetal.  Any malloc() that
  *   spilled past Region 0 was landing inside live rpmsg buffer memory —
- *   a self-inflicted heap/IPC overlap.  Fixed by relocating Region 1 to
- *   the rpu1 (second R5 core) carveout instead:
+ *   a self-inflicted heap/IPC overlap.  Fixed (2026-07-10, before the
+ *   2026-07-21 carveout grow below) by relocating Region 1 to the rpu1
+ *   (second R5 core) carveout instead:
+ *
+ *   NOTE (2026-07-21): the addresses in the paragraph above are historical —
+ *   rpu0vdev0buffer has since moved to 0x1EF08000-0x1F008000 as part of
+ *   growing rproc_0_reserved from 256 KB to 2 MB (see up_allocate_heap()
+ *   above and system-user.dtsi).  Region 1 itself is unaffected: it still
+ *   lives on the unused rpu1 carveout below, unrelated to RPU0's growth.
  *
  *     rproc@3ef00000            0x3ef00000  256 KB  (code/data, unused —
  *                                                     no firmware loaded)
@@ -137,7 +153,7 @@ void arm_addregion(void)
 
 __EXPORT void zynqr5_board_initialize(void)
 {
-	*((volatile uint32_t *)0x1ED3FFB8u) = 0xB00710A1u;
+	*((volatile uint32_t *)0x1EEFFFB8u) = 0xB00710A1u;
 }
 
 /****************************************************************************
@@ -150,12 +166,12 @@ __EXPORT void zynqr5_board_initialize(void)
 
 __EXPORT void board_late_initialize(void)
 {
-	*((volatile uint32_t *)0x1ED3FF3Cu) = 0xCA110001u; /* board_late_initialize entered */
+	*((volatile uint32_t *)0x1EEFFF3Cu) = 0xCA110001u; /* board_late_initialize entered */
 	__asm__ volatile("dsb sy" ::: "memory");
 #ifdef CONFIG_ZYNQR5_RPTUN
 	zynqr5_rptun_initialize();
 #endif
-	*((volatile uint32_t *)0x1ED3FF38u) = 0xCA110002u; /* board_late_initialize returned */
+	*((volatile uint32_t *)0x1EEFFF38u) = 0xCA110002u; /* board_late_initialize returned */
 	__asm__ volatile("dsb sy" ::: "memory");
 }
 

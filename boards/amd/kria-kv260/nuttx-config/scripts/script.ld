@@ -3,9 +3,11 @@
  *
  * Linker script for the Kria KV260 R5F running NuttX via Linux remoteproc.
  *
- * Linux reserves a 256 KB DDR carveout at 0x1ED00000.  The remoteproc
- * driver loads ELF PT_LOAD segments directly into this region, so
- * VMA == LMA for all sections (no copy required).
+ * Linux reserves a 2 MB DDR carveout at 0x1ED00000 (grown from 256 KB on
+ * 2026-07-21 to make room for larger PX4 modules; see rproc_0_reserved in
+ * system-user.dtsi).  The remoteproc driver loads ELF PT_LOAD segments
+ * directly into this region, so VMA == LMA for all sections (no copy
+ * required).
  *
  * Memory layout:
  *
@@ -15,7 +17,7 @@
  *   DDR   0x1ED00000 – NuttX vector table (VBAR target)
  *         0x1ED00020 – .text, .rodata, .data, .bss
  *         ...
- *         0x1ED3FFFF – top of carveout
+ *         0x1EEFFFFF – top of carveout
  *
  * NuttX heap:  from _ebss to end of DDR region.
  * NuttX stacks: allocated from the heap by the scheduler.
@@ -37,12 +39,13 @@ MEMORY
      * remoteproc maps p_paddr=0x0 to APU physical 0xFFE00000. */
     atcm (rwx) : ORIGIN = 0x00000000, LENGTH = 64K
 
-    /* Linux DT carveout rproc@1ed00000 is 256 KB.
-     * Vrings and message buffers live in separate DT nodes above 0x1ED40000:
-     *   0x1ED40000  rpu0vdev0vring0  16 KB
-     *   0x1ED44000  rpu0vdev0vring1  16 KB
-     *   0x1ED48000  rpu0vdev0buffer  1 MB  */
-    ddr  (rwx) : ORIGIN = 0x1ED00000, LENGTH = 0x00040000
+    /* Linux DT carveout rproc@1ed00000 is 2 MB (grown from 256 KB
+     * 2026-07-21 for PX4 module headroom).
+     * Vrings and message buffers live in separate DT nodes above 0x1EF00000:
+     *   0x1EF00000  rpu0vdev0vring0  16 KB
+     *   0x1EF04000  rpu0vdev0vring1  16 KB
+     *   0x1EF08000  rpu0vdev0buffer  1 MB  */
+    ddr  (rwx) : ORIGIN = 0x1ED00000, LENGTH = 0x00200000
 }
 
 ENTRY(_tcm_start)
@@ -145,12 +148,24 @@ SECTIONS
      * symbol override here — that redirects the symbol to uninitialized DDR,
      * making C reads return garbage.
      *
-     * Memory layout within the 256 KB carveout:
+     * Memory layout within the 2 MB carveout (grown from 256 KB 2026-07-21):
      *   [.text/.data/.bss]  : at ORIGIN(ddr), grows up to _ebss
      *   [idle stack]        : [_ebss, _ebss + CONFIG_IDLETHREAD_STACKSIZE)
-     *   [heap]              : [g_idle_topstack, 0x1ED3FE00)   (~44 KB)
-     *   [debug scratchpad]  : [0x1ED3FE00, 0x1ED3FFFF]       (512 B, A53-readable)
-     * Vrings/buffers live in a separate DT carveout above 0x1ED40000. */
+     *   [heap]              : [g_idle_topstack, 0x1EEFFE00)   (~1.79 MB,
+     *                                                            confirmed via
+     *                                                            the
+     *                                                            up_allocate_heap()
+     *                                                            breadcrumb at
+     *                                                            0x1EEFFE04 on
+     *                                                            hardware
+     *                                                            2026-07-21:
+     *                                                            0x1CA38C =
+     *                                                            1876876
+     *                                                            bytes; was
+     *                                                            ~44 KB before
+     *                                                            the grow)
+     *   [debug scratchpad]  : [0x1EEFFE00, 0x1EEFFFFF]       (512 B, A53-readable)
+     * Vrings/buffers live in a separate DT carveout above 0x1EF00000. */
 
     /* Debug sections */
 
