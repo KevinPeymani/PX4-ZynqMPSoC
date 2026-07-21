@@ -39,16 +39,24 @@ extern uintptr_t g_idle_topstack;
  *
  * Description:
  *   Initialize the primary NuttX heap region (Region 0).  A second region
- *   is added by arm_addregion() below after the OpenAMP vrings.
+ *   is added by arm_addregion() below.
  *
- *   Layout (1 MB carveout 0x1ED00000–0x1EE00000):
+ *   Layout (the *actual* 256 KB rproc@1ed00000 remoteproc carveout, per the
+ *   live Linux devicetree — NOT a 1 MB carveout; the 1 MB figure belongs to
+ *   the separate rpu0vdev0buffer DT node, confirmed below):
  *     [.text/.data/.bss]  : 0x1ED00000 .. _ebss
  *     [idle stack]        : [_ebss, g_idle_topstack)       (2 KB)
  *     [heap region 0]     : [g_idle_topstack, 0x1ED3FE00)  (~44 KB)
- *     [debug scratchpad]  : [0x1ED3FE00, 0x1ED3FFFF]
+ *     [debug scratchpad]  : [0x1ED3FE00, 0x1ED3FFFF]       (512 B)
  *     [vring0 TX]         : [0x1ED40000, 0x1ED44000)       (16 KB, DT fixed)
  *     [vring1 RX]         : [0x1ED44000, 0x1ED48000)       (16 KB, DT fixed)
- *     [heap region 1]     : [0x1ED48000, 0x1EE00000)       (~736 KB)
+ *     [rpu0vdev0buffer]   : [0x1ED48000, 0x1EE48000)       (1 MB, DT fixed,
+ *                                                            LIVE rpmsg
+ *                                                            message-buffer
+ *                                                            pool — NuttX
+ *                                                            must NOT touch
+ *                                                            this; see
+ *                                                            arm_addregion())
  *
  *   The default arm_allocateheap.c uses CONFIG_RAM_END which reaches past
  *   the carveout into the rpmsg vring region; hence this override.
@@ -59,8 +67,19 @@ void up_allocate_heap(void **heap_start, size_t *heap_size)
 	uintptr_t start = g_idle_topstack; /* _ebss + CONFIG_IDLETHREAD_STACKSIZE */
 	uintptr_t end = 0x1ED3FE00u;       /* debug scratch area starts here */
 
+	uintptr_t size = (end > start) ? (end - start) : 0;
+
 	*heap_start = (void *)start;
-	*heap_size = (end > start) ? (end - start) : 0;
+	*heap_size = size;
+
+	/* DBG (2026-07-21, Task B): log the actual values fed to kumm_initialize()
+	 * so they can be compared on hardware against the intended constant
+	 * 0x1ED3FE00 boundary.  0x1ED3FE00/04 are unused by every other
+	 * breadcrumb in this codebase (verified via `grep -rn 1ED3FE`) and sit
+	 * inside the debug scratchpad itself, not the heap. */
+	*((volatile uint32_t *)0x1ED3FE00u) = (uint32_t)start;
+	*((volatile uint32_t *)0x1ED3FE04u) = (uint32_t)size;
+	__asm__ volatile("dsb sy" ::: "memory");
 }
 
 /****************************************************************************
@@ -70,21 +89,41 @@ void up_allocate_heap(void **heap_start, size_t *heap_size)
  *   Add the second DDR heap region to the kernel memory manager.
  *   Called by arm_initialize() when CONFIG_MM_REGIONS > 1.
  *
- *   Memory map (within the 1 MB remoteproc carveout 0x1ED00000-0x1EE00000):
- *     [g_idle_topstack, 0x1ED3FE00)  Region 0 — up_allocate_heap() above
- *     [0x1ED40000,      0x1ED44000)  rpu0vdev0vring0 (OpenAMP TX vring)
- *     [0x1ED44000,      0x1ED48000)  rpu0vdev0vring1 (OpenAMP RX vring)
- *     [0x1ED48000,      0x1EE00000)  Region 1 — added here (~736 KB)
+ *   Region 1 previously lived at [0x1ED48000, 0x1EE00000) — entirely inside
+ *   the live Linux DT reserved-memory node rpu0vdev0buffer@1ed48000
+ *   (0x1ED48000-0x1EE48000, 1 MB, no-map), which is the actual OpenAMP/
+ *   rpmsg shared message-buffer pool that Linux and this R5F actively
+ *   exchange rpmsg traffic through via rptun/libmetal.  Any malloc() that
+ *   spilled past Region 0 was landing inside live rpmsg buffer memory —
+ *   a self-inflicted heap/IPC overlap.  Fixed by relocating Region 1 to
+ *   the rpu1 (second R5 core) carveout instead:
  *
- *   The vring addresses must match the Linux DT reserved-memory nodes.
+ *     rproc@3ef00000            0x3ef00000  256 KB  (code/data, unused —
+ *                                                     no firmware loaded)
+ *     rpu1vdev0vring0@3ef40000  0x3ef40000   16 KB  (unused)
+ *     rpu1vdev0vring1@3ef44000  0x3ef44000   16 KB  (unused)
+ *     rpu1vdev0buffer@3ef48000  0x3ef48000    1 MB  (unused)
  *
+ *   This project only loads NuttX onto R5F-0 (remoteproc0); remoteproc1
+ *   (r5f@1) is offline and nothing in this tree targets it.  All four rpu1
+ *   nodes carry no-map, so Linux's normal allocator will never hand this
+ *   memory to a process; it is the closest thing to "genuinely free" DDR
+ *   reachable without touching the devicetree/BOOT.BIN.  Region 1 keeps its
+ *   original size (736 KB) — only the physical location moved — to avoid
+ *   changing already-verified heap capacity/behavior.
+ *
+ *   CAVEAT: if this board is ever extended to load a second R5F image onto
+ *   RPU1 via remoteproc1, this Region 1 placement MUST move again first —
+ *   it would collide with RPU1's own code/vring/buffer carveout exactly
+ *   the way the original bug collided with RPU0's buffer pool.
  ****************************************************************************/
 
 #if CONFIG_MM_REGIONS > 1
 void arm_addregion(void)
 {
-	/* CONFIG_BUILD_FLAT: single unified heap, use umm_addregion */
-	umm_addregion((FAR void *)0x1ED48000u, 0x1EE00000u - 0x1ED48000u);
+	/* CONFIG_BUILD_FLAT: single unified heap, use umm_addregion.
+	 * rpu1 (unused second R5 core) carveout: 0x3EF00000 + 736 KB. */
+	umm_addregion((FAR void *)0x3EF00000u, 0x000B8000u);
 }
 #endif
 
