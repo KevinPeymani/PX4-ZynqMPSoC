@@ -48,6 +48,7 @@ px4_add_module(
 		drivers_gyroscope
 		drivers_rangefinder
 		geo
+		lat_lon_alt
 	)
 
 if(PX4_PLATFORM MATCHES "posix")
