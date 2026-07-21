@@ -1,7 +1,19 @@
 #!/bin/bash
 # xppu-gic-unlock.sh — Grant RPU0 write access to the RPU GIC (0xF9000000)
 #
-# Implements Steps 1-4 from ldp-xppu-gic-fix.md.
+# See boot-xmpu-fix-plan.md (same directory) for the full diagnostic flow.
+# (The older ldp-xppu-gic-fix.md this script originally referenced has been
+# removed/superseded — do not go looking for it.)
+#
+# ⚠️ 2026-07-20 reassessment: run boot-xmpu-fix-plan.md's "Part 0" checks
+# (GIC secure/non-secure state) BEFORE this script. This board's own
+# Vivado-generated psu_lpd_xppu_data() enumerates every LPD_XPPU aperture by
+# name/address, and none of them are anywhere near 0xF9000000 — they're all
+# 0xFF...-prefixed peripherals (UART, IPI, TTC, GPIO, ...). So the scan below
+# most likely will NOT find an aperture "covering" 0xF9000000, because that
+# address probably isn't LPD_XPPU-gated at all. An empty scan is a real
+# result, not a sign to keep guessing at aperture numbers.
+#
 # Run as root (or sudo) on the KV260 Linux console BEFORE loading the R5F firmware.
 #
 # Usage:
@@ -52,6 +64,10 @@ if [ -n "$1" ]; then
 else
     echo "Cross-reference the scan with UG1085 Table 2-3 to find which aperture"
     echo "covers 0xF9000000 (RPU Private Bus / PL390 GIC distributor)."
+    echo ""
+    echo "NOTE: if the scan above showed no aperture anywhere near 0xF9000000,"
+    echo "that is expected (see the 2026-07-20 note at the top of this script) —"
+    echo "picking an unrelated aperture number here will not fix anything."
     echo ""
     read -rp "Enter aperture number to patch (or Ctrl-C to abort): " APERTURE_N
 fi
