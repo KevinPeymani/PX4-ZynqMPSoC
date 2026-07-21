@@ -8,3 +8,15 @@
 #
 param set-default BAT1_V_DIV 0.0
 param set-default BAT1_A_PER_V 0.0
+
+# No SD card / filesystem on this board: dataman missions live in RAM.
+param set-default SYS_DM_BACKEND 1
+
+# simulator_sih is actually started from board_app_initialize() (see
+# boards/amd/kria-kv260/src/init.c) rather than relying on this line to run:
+# this board has no working console, and whether rc.board_defaults executes
+# at all depends on nsh_consolemain() getting past opening /dev/console,
+# which is unverified. Kept here too (harmless — ModuleBase::main() detects
+# the module is already running and no-ops) for whenever the console is
+# fixed and rc.board_defaults becomes a reliable place to start modules.
+simulator_sih start

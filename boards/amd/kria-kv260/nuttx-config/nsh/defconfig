@@ -37,6 +37,18 @@ CONFIG_FS_BINFS=y
 CONFIG_FS_PROCFS=y
 CONFIG_FS_PROCFS_REGISTER=y
 CONFIG_FS_ROMFS=y
+CONFIG_FS_CROMFS=y
+
+# Mount the built-in ROMFS at /etc and run it at boot (rc.sysinit + rcS).
+# Without this, nsh_main() never sources /etc/init.d/rcS — discovered
+# 2026-07-21 while bringing up simulator_sih: the board booted and rpmsg
+# worked fine, but no PX4 module (including rc.board_defaults) was ever
+# actually started, because this was missing. Every other PX4 NuttX board
+# in this tree sets this same CROMFS combination (see e.g.
+# boards/matek/gnss-m9n-f4/nuttx-config/nsh/defconfig).
+CONFIG_NSH_CROMFSETC=y
+CONFIG_NSH_ROMFSETC=y
+CONFIG_NSH_ROMFSSECTSIZE=128
 
 # POSIX / scheduler features used by PX4 work queues and tasks
 CONFIG_FDCLONE_STDIO=y
