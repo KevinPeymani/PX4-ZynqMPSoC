@@ -216,6 +216,21 @@ void Sih::sensor_step()
 
 	equations_of_motion(dt);
 
+	/* Debug breadcrumb: confirm the SIH loop is actually running on hardware
+	 * (no console available to invoke "sih status"). Free block within the
+	 * shared 0x1EEFFE00-0x1EEFFFFF debug scratchpad (see
+	 * boards/amd/kria-kv260/src/init.c) — 0x1EEFFE08-0x1EEFFEFC was verified
+	 * unused by grepping arch/arm/src/zynqr5 sources and drivers/rptun/rptun.c
+	 * before picking it (both files are dense with breadcrumbs elsewhere in
+	 * that scratchpad). 0x1EEFFE08: free-running call counter. 0x1EEFFE0C:
+	 * IEEE-754 bit pattern of the current simulated altitude [m], read via
+	 * `devmem <addr> 32` from Linux and reinterpreted as float. */
+	*((volatile uint32_t *)0x1EEFFE08u) += 1;
+	{
+		const float altitude_m = _lla.altitude();
+		*((volatile uint32_t *)0x1EEFFE0Cu) = *reinterpret_cast<const uint32_t *>(&altitude_m);
+	}
+
 	reconstruct_sensors_signals(now);
 
 	if ((_vehicle == VehicleType::FixedWing

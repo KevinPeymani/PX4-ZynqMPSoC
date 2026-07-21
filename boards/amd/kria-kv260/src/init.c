@@ -34,6 +34,38 @@ extern uintptr_t g_idle_topstack;
 #include "zynqr5_rptun.h"
 #endif
 
+/* simulator_sih's builtin entry point (see
+ * src/modules/simulation/simulator_sih/sih.cpp). Called directly from
+ * board_app_initialize() below instead of relying on rc.board_defaults/rcS.
+ *
+ * KNOWN BLOCKER (2026-07-21, unresolved): as of today, nothing at task
+ * level — not nsh_main, not board_app_initialize, not this call — ever
+ * actually runs on this board. Root cause, fully bisected via the debug
+ * scratchpad: the rptun kthread (drivers/rptun/rptun.c, CONFIG_RPTUN_PRIORITY
+ * = 224) spin-polls the IPI register in a `while (nxsem_trywait(...) != OK)`
+ * loop and calls sched_yield() every iteration as its only "give up the
+ * CPU" mechanism. sched_yield() only yields to *same-priority* ready tasks;
+ * with nothing else at priority 224, it is a no-op, so the rptun thread
+ * never relinquishes the CPU at all. CONFIG_INIT_PRIORITY (nsh_main, and
+ * therefore everything downstream including this function) is 100 — a
+ * strictly lower priority — so it never gets a single tick of CPU time.
+ * nxtask_create() for the init task still returns a valid pid; it just
+ * never gets scheduled.
+ *
+ * A fix was prototyped (periodically substituting a real nxsig_usleep() for
+ * sched_yield() in that loop) and confirmed working: nsh_main,
+ * board_app_initialize, and this simulator_sih_main() call all ran, and
+ * sih's debug breadcrumb (see sih.cpp) advanced at the expected ~200 Hz.
+ * However, that same change broke the rpmsg ping regression (0/10, rptun
+ * thread heartbeat froze) — suspected priority inversion between the newly-
+ * unblocked SIH task (SCHED_PRIORITY_MAX) and whatever completes rptun's
+ * sleep — and was reverted rather than risk rpmsg. This call is left in
+ * place, correct and ready, for whoever fixes the rptun scheduling issue
+ * without breaking rpmsg; today it is unreached. */
+#ifdef CONFIG_MODULES_SIMULATION_SIMULATOR_SIH
+extern int simulator_sih_main(int argc, char *argv[]);
+#endif
+
 /****************************************************************************
  * Name: up_allocate_heap
  *
@@ -207,6 +239,17 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	drv_led_start();
 	led_on(LED_BLUE);
+
+#ifdef CONFIG_MODULES_SIMULATION_SIMULATOR_SIH
+	{
+		/* See the simulator_sih_main() declaration above for why this is
+		 * started here instead of from rc.board_defaults. */
+		char arg0[] = "simulator_sih";
+		char arg1[] = "start";
+		char *sih_argv[] = { arg0, arg1, NULL };
+		simulator_sih_main(2, sih_argv);
+	}
+#endif
 
 	return OK;
 }
