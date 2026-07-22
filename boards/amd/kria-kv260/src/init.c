@@ -38,30 +38,37 @@ extern uintptr_t g_idle_topstack;
  * src/modules/simulation/simulator_sih/sih.cpp). Called directly from
  * board_app_initialize() below instead of relying on rc.board_defaults/rcS.
  *
- * KNOWN BLOCKER (2026-07-21, unresolved): as of today, nothing at task
- * level — not nsh_main, not board_app_initialize, not this call — ever
- * actually runs on this board. Root cause, fully bisected via the debug
+ * SCHEDULING BLOCKER (2026-07-21, RESOLVED 2026-07-22): nothing at task
+ * level — not nsh_main, not board_app_initialize, not this call — used to
+ * ever run on this board. Root cause, fully bisected via the debug
  * scratchpad: the rptun kthread (drivers/rptun/rptun.c, CONFIG_RPTUN_PRIORITY
- * = 224) spin-polls the IPI register in a `while (nxsem_trywait(...) != OK)`
- * loop and calls sched_yield() every iteration as its only "give up the
+ * = 224) spin-polled the IPI register in a `while (nxsem_trywait(...) != OK)`
+ * loop and called sched_yield() every iteration as its only "give up the
  * CPU" mechanism. sched_yield() only yields to *same-priority* ready tasks;
- * with nothing else at priority 224, it is a no-op, so the rptun thread
- * never relinquishes the CPU at all. CONFIG_INIT_PRIORITY (nsh_main, and
+ * with nothing else at priority 224, it was a no-op, so the rptun thread
+ * never relinquished the CPU at all. CONFIG_INIT_PRIORITY (nsh_main, and
  * therefore everything downstream including this function) is 100 — a
- * strictly lower priority — so it never gets a single tick of CPU time.
- * nxtask_create() for the init task still returns a valid pid; it just
- * never gets scheduled.
+ * strictly lower priority — so it never got a single tick of CPU time.
  *
- * A fix was prototyped (periodically substituting a real nxsig_usleep() for
- * sched_yield() in that loop) and confirmed working: nsh_main,
- * board_app_initialize, and this simulator_sih_main() call all ran, and
- * sih's debug breadcrumb (see sih.cpp) advanced at the expected ~200 Hz.
- * However, that same change broke the rpmsg ping regression (0/10, rptun
- * thread heartbeat froze) — suspected priority inversion between the newly-
- * unblocked SIH task (SCHED_PRIORITY_MAX) and whatever completes rptun's
- * sleep — and was reverted rather than risk rpmsg. This call is left in
- * place, correct and ready, for whoever fixes the rptun scheduling issue
- * without breaking rpmsg; today it is unreached. */
+ * Fixed with two changes, both required:
+ *   1. drivers/rptun/rptun.c: replaced sched_yield() with a real
+ *      nxsig_usleep(1 ms) in both CONFIG_ZYNQR5_RPTUN spin-poll loops, so
+ *      rptun actually gives up the CPU between polls.
+ *   2. src/modules/simulation/simulator_sih/sih.cpp: sih was spawned at
+ *      SCHED_PRIORITY_MAX (this module's default on every board), which on
+ *      this target outranks rptun/HPWORK's priority-224 convention outright.
+ *      Once change #1 unblocked nsh_main enough to spawn sih, sih at
+ *      SCHED_PRIORITY_MAX starved rptun's IPC wake path right back (0/10
+ *      rpmsg pings) — a priority inversion, not a problem with change #1
+ *      itself. Fixed via a CONFIG_ZYNQR5_RPTUN-scoped compile-time override
+ *      pinning sih to CONFIG_RPTUN_PRIORITY - 44 (180) on this board only;
+ *      every other SIH-using target keeps SCHED_PRIORITY_MAX unchanged.
+ *
+ * Verified on hardware 2026-07-22: remoteproc0 reaches "running",
+ * rpmsg_ping_test.py is 10/10 (avg ~39 ms RTT — up from ~0.2 ms with the old
+ * always-spinning loop, a deliberate latency/correctness tradeoff, see
+ * ZYNQR5_RPTUN_POLL_USEC in rptun.c), and sih's debug breadcrumb (see
+ * sih.cpp) advances at ~200 Hz as expected. */
 #ifdef CONFIG_MODULES_SIMULATION_SIMULATOR_SIH
 extern int simulator_sih_main(int argc, char *argv[]);
 #endif

@@ -53,6 +53,26 @@ using namespace math;
 using namespace matrix;
 using namespace time_literals;
 
+/* Board-specific compile-time override: on the AMD Kria KV260 R5F NuttX
+ * port, CONFIG_ZYNQR5_RPTUN is the rptun IPC kthread that carries every
+ * rpmsg/OpenAMP message between this core and Linux, and it (like NuttX's
+ * own HPWORK convention) runs at CONFIG_RPTUN_PRIORITY (224) precisely
+ * because NuttX's docs designate that tier as "the highest priority thread
+ * in your system." Spawning sih at SCHED_PRIORITY_MAX (this module's
+ * default, harmless on every other SIH-using target since none of them run
+ * a same-priority-224 IPC kthread) outranks rptun/HPWORK outright on this
+ * board and was observed to starve rptun's IPC wake path once sih actually
+ * started running. Pin sih to 44 below rptun's priority instead — enough
+ * headroom to guarantee it never contends with rptun/HPWORK, while still
+ * sitting well above SCHED_PRIORITY_DEFAULT (100) so the simulation loop
+ * isn't itself starved by ordinary app-level tasks. This is scoped to this
+ * board only; every other target keeps the original SCHED_PRIORITY_MAX. */
+#if defined(CONFIG_ZYNQR5_RPTUN)
+# define SIH_TASK_PRIORITY (CONFIG_RPTUN_PRIORITY - 44)
+#else
+# define SIH_TASK_PRIORITY SCHED_PRIORITY_MAX
+#endif
+
 ModuleBase::Descriptor Sih::desc{task_spawn, custom_command, print_usage};
 
 Sih::Sih() :
@@ -994,7 +1014,7 @@ int Sih::task_spawn(int argc, char *argv[])
 {
 	desc.task_id = px4_task_spawn_cmd("sih",
 					  SCHED_DEFAULT,
-					  SCHED_PRIORITY_MAX,
+					  SIH_TASK_PRIORITY,
 					  1560,
 					  (px4_main_t)&run_trampoline,
 					  (char *const *)argv);
