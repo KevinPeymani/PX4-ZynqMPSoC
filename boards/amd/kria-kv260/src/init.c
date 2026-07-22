@@ -34,6 +34,10 @@ extern uintptr_t g_idle_topstack;
 #include "zynqr5_rptun.h"
 #endif
 
+#ifdef CONFIG_RPMSG_UART
+#include <nuttx/serial/uart_rpmsg.h>
+#endif
+
 /* simulator_sih's builtin entry point (see
  * src/modules/simulation/simulator_sih/sih.cpp). Called directly from
  * board_app_initialize() below instead of relying on rc.board_defaults/rcS.
@@ -246,6 +250,39 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	drv_led_start();
 	led_on(LED_BLUE);
+
+#ifdef CONFIG_RPMSG_UART
+	/* Second named rpmsg endpoint ("rpmsg-ttyRPMSG0"), producing
+	 * /dev/ttyRPMSG0 on this (R5F) side, for MAVLink <-> A53/Linux traffic.
+	 * Rides the same vdev/vring pair as the existing "rpmsg-ping" channel
+	 * (VIRTIO_RPMSG_F_NS already set in zynqr5_rsc.c) — no new
+	 * resource-table entry needed.
+	 *
+	 * Deliberately called from here (board_app_initialize, i.e. from
+	 * NSH's boardctl(BOARDIOC_INIT)) rather than from
+	 * zynqr5_rptun_initialize() (board_late_initialize, much earlier).
+	 * Both this endpoint and "rpmsg-ping" request RPMSG_ADDR_ANY, so
+	 * whichever calls rpmsg_create_ept() first gets address 0x400 and the
+	 * other gets 0x401. "rpmsg-ping" MUST keep 0x400 — the Linux-side
+	 * regression test (~/rpmsg_ping_test.py) hardcodes
+	 * RPMSG_PING_DST=1024 (0x400) for it. rptun_dev_start() (which creates
+	 * "rpmsg-ping" via a direct rptun_ping_init() call) runs inside the
+	 * CONFIG_RPTUN_THREAD kthread at CONFIG_RPTUN_PRIORITY (224) — a
+	 * strictly higher priority than nsh_main/board_app_initialize's
+	 * CONFIG_INIT_PRIORITY (100) — so by the time this NSH-driven
+	 * boardctl() call runs, dev_start has already completed and
+	 * "rpmsg-ping" already holds 0x400. Calling uart_rpmsg_init() here
+	 * makes rpmsg_register_callback() take its "device already active"
+	 * path (walk g_rptun_priv, invoke device_created immediately) instead
+	 * of registering into g_rptun_cb ahead of dev_start's broadcast —
+	 * confirmed via a first attempt from zynqr5_rptun_initialize() (both
+	 * before AND after its rptun_initialize() call) that both put this
+	 * endpoint at 0x400 and broke rpmsg-ping (0/10 pings). Verified fixed
+	 * on hardware 2026-07-22: dmesg shows "creating channel rpmsg-ping
+	 * addr 0x400" then "creating channel rpmsg-ttyRPMSG0 addr 0x401", and
+	 * rpmsg_ping_test.py is back to 10/10. */
+	uart_rpmsg_init("a53", "RPMSG0", 4096, false);
+#endif
 
 #ifdef CONFIG_MODULES_SIMULATION_SIMULATOR_SIH
 	{

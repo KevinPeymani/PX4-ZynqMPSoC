@@ -108,6 +108,13 @@ CONFIG_RPTUN_STACKSIZE=16384
 CONFIG_RPTUN_THREAD=y
 CONFIG_ZYNQR5_RPTUN=y
 
+# rpmsg-backed /dev/ttyRPMSG0 — second named endpoint on the same vdev/vring
+# pair as "rpmsg-ping" above (VIRTIO_RPMSG_F_NS is already set in
+# zynqr5_rsc.c, so no new resource-table entry is needed). Registered from
+# zynqr5_rptun_initialize() via uart_rpmsg_init("a53", "RPMSG0", ...) —
+# carries MAVLink between the PX4 mavlink module and the A53/Linux side.
+CONFIG_RPMSG_UART=y
+
 # UARTs
 # UART0 (0xFF000000) is exclusively owned by the R5F — Linux's device tree
 # marks /axi/serial@ff000000 status="disabled", confirmed on-board 2026-07-21.
