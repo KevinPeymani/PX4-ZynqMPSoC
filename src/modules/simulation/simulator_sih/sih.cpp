@@ -613,7 +613,7 @@ void Sih::generate_rover_ackermann_dynamics(const float throttle_cmd, const floa
 		if (_T_B.norm() > FLT_EPSILON) {
 			F_f = _v_E.unit_or_zero() * MU_K * _MASS * 9.81f;
 
-		} else {
+		} else if (dt > FLT_EPSILON) {
 			F_f = _v_E * _MASS / dt; // Stop the vehicle
 		}
 
@@ -649,7 +649,7 @@ void Sih::equations_of_motion(const float dt)
 		    || _vehicle == VehicleType::StandardVTOL) {
 			ground_force_E = -sum_of_forces_E;
 
-			if (!_grounded) {
+			if (!_grounded && dt > FLT_EPSILON) {
 				// if we just hit the floor
 				// compute the force that will stop the vehicle in one time step
 				ground_force_E += -_v_E / dt * _MASS;
@@ -662,7 +662,7 @@ void Sih::equations_of_motion(const float dt)
 			Vector3f down_u = _R_N2E.col(2);
 			ground_force_E = -down_u * sum_of_forces_E * down_u;
 
-			if (!_grounded) {
+			if (!_grounded && dt > FLT_EPSILON) {
 				// if we just hit the floor
 				// compute the force that will stop the vehicle in one time step
 				ground_force_E += down_u * (-_v_N(2) / dt) * _MASS;
