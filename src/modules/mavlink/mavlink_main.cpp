@@ -89,6 +89,25 @@
 #define MAX_DATA_RATE                  10000000        ///< max data rate in bytes/s
 #define MAIN_LOOP_DELAY                10000           ///< 100 Hz @ 1000 bytes/s data rate
 
+/* Board-specific compile-time override: on the AMD Kria KV260 R5F NuttX
+ * port, CONFIG_ZYNQR5_RPTUN is the rptun IPC kthread that carries every
+ * rpmsg/OpenAMP message between this core and Linux, at CONFIG_RPTUN_PRIORITY
+ * (224). simulator_sih on this board is pinned to CONFIG_RPTUN_PRIORITY - 44
+ * (180, see src/modules/simulation/simulator_sih/sih.cpp) to stay below
+ * rptun while still outranking ordinary app-level tasks. mavlink at the
+ * plain SCHED_PRIORITY_DEFAULT (100) sits strictly below sih and was
+ * observed to starve outright — its own task never returns from
+ * px4_usleep() a couple hundred ms after boot, even with zero external
+ * rpmsg traffic — the same priority-inversion class already fixed for sih,
+ * one tier down. Give mavlink the same headroom as sih so the scheduler
+ * actually gives it timeslices instead of always preempting it. Scoped to
+ * this board only; every other target keeps SCHED_PRIORITY_DEFAULT. */
+#if defined(CONFIG_ZYNQR5_RPTUN)
+# define MAVLINK_TASK_PRIORITY (CONFIG_RPTUN_PRIORITY - 44)
+#else
+# define MAVLINK_TASK_PRIORITY SCHED_PRIORITY_DEFAULT
+#endif
+
 static pthread_mutex_t mavlink_module_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t mavlink_event_buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static px4::atomic<int> mavlink_instance_count {0};
@@ -3114,7 +3133,7 @@ Mavlink::start(int argc, char *argv[])
 	// when the started task exits.
 	px4_task_spawn_cmd("mavlink_main",
 			   SCHED_DEFAULT,
-			   SCHED_PRIORITY_DEFAULT,
+			   MAVLINK_TASK_PRIORITY,
 			   PX4_STACK_ADJUSTED(2896) + MAVLINK_NET_ADDED_STACK,
 			   (px4_main_t)&Mavlink::start_helper,
 			   (char *const *)argv);
