@@ -92,18 +92,29 @@
 /* Board-specific compile-time override: on the AMD Kria KV260 R5F NuttX
  * port, CONFIG_ZYNQR5_RPTUN is the rptun IPC kthread that carries every
  * rpmsg/OpenAMP message between this core and Linux, at CONFIG_RPTUN_PRIORITY
- * (224). simulator_sih on this board is pinned to CONFIG_RPTUN_PRIORITY - 44
- * (180, see src/modules/simulation/simulator_sih/sih.cpp) to stay below
- * rptun while still outranking ordinary app-level tasks. mavlink at the
- * plain SCHED_PRIORITY_DEFAULT (100) sits strictly below sih and was
- * observed to starve outright — its own task never returns from
- * px4_usleep() a couple hundred ms after boot, even with zero external
- * rpmsg traffic — the same priority-inversion class already fixed for sih,
- * one tier down. Give mavlink the same headroom as sih so the scheduler
- * actually gives it timeslices instead of always preempting it. Scoped to
- * this board only; every other target keeps SCHED_PRIORITY_DEFAULT. */
+ * (224). mavlink at the plain SCHED_PRIORITY_DEFAULT (100) was observed to
+ * starve outright — its own task never returns from px4_usleep() a couple
+ * hundred ms after boot, even with zero external rpmsg traffic — the same
+ * priority-inversion class already fixed for simulator_sih (pinned to
+ * CONFIG_RPTUN_PRIORITY - 44 = 180, see
+ * src/modules/simulation/simulator_sih/sih.cpp).
+ *
+ * Pinning mavlink to that same 180 tier (sharing it with sih) fixed the
+ * outright freeze but left mavlink severely rate-limited: ~17 messages over
+ * 90 s with multi-second gaps, versus the ~100 Hz main loop rate it targets.
+ * SCHED_RR is in effect here (CONFIG_RR_INTERVAL > 0), so two tasks sharing
+ * one priority should round-robin fairly in theory, but in practice sih
+ * (a tight, rarely-blocking simulation loop) was crowding mavlink out of its
+ * slices almost entirely. Giving mavlink its own tier strictly above sih —
+ * still safely below rptun — resolved this completely: 570 messages over
+ * the same 90 s window, arriving continuously (~150 ms average gap) rather
+ * than in rare bursts. Verified this does not starve sih in turn: its own
+ * hardware health breadcrumb (0x1EEFFE08, see sih.cpp) still advances at
+ * ~190 Hz under this scheme, matching its ~200 Hz historical baseline.
+ *
+ * Scoped to this board only; every other target keeps SCHED_PRIORITY_DEFAULT. */
 #if defined(CONFIG_ZYNQR5_RPTUN)
-# define MAVLINK_TASK_PRIORITY (CONFIG_RPTUN_PRIORITY - 44)
+# define MAVLINK_TASK_PRIORITY (CONFIG_RPTUN_PRIORITY - 20)
 #else
 # define MAVLINK_TASK_PRIORITY SCHED_PRIORITY_DEFAULT
 #endif
