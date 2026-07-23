@@ -38,6 +38,10 @@ extern uintptr_t g_idle_topstack;
 #include <nuttx/serial/uart_rpmsg.h>
 #endif
 
+#ifdef CONFIG_SYSLOG_RPMSG
+#include <nuttx/syslog/syslog_rpmsg.h>
+#endif
+
 /* simulator_sih's builtin entry point (see
  * src/modules/simulation/simulator_sih/sih.cpp). Called directly from
  * board_app_initialize() below instead of relying on rc.board_defaults/rcS.
@@ -75,6 +79,20 @@ extern uintptr_t g_idle_topstack;
  * sih.cpp) advances at ~200 Hz as expected. */
 #ifdef CONFIG_MODULES_SIMULATION_SIMULATOR_SIH
 extern int simulator_sih_main(int argc, char *argv[]);
+#endif
+
+/* Started directly for the same reason as simulator_sih_main() below:
+ * this board's rc.serial (auto-generated from CONFIG_BOARD_SERIAL_TEL1,
+ * see ROMFS/px4fmu_common/init.d/rcS) issues a plain "mavlink start ..."
+ * NSH command line, which depends on PX4's module-name-to-entrypoint
+ * dispatch table actually being wired up for NSH text commands — a path
+ * nothing else on this board has ever exercised (every other module,
+ * including SIH, is started via a direct C call like this one). A debug
+ * breadcrumb at the top of mavlink_main() never fired when relying on
+ * rc.serial alone, confirming that dispatch path — not anything
+ * mavlink-specific — was the actual gap. */
+#ifdef CONFIG_MODULES_MAVLINK
+extern int mavlink_main(int argc, char *argv[]);
 #endif
 
 /****************************************************************************
@@ -197,6 +215,19 @@ void arm_addregion(void)
 __EXPORT void zynqr5_board_initialize(void)
 {
 	*((volatile uint32_t *)0x1EEFFFB8u) = 0xB00710A1u;
+
+#ifdef CONFIG_SYSLOG_RPMSG
+	/* syslog_rpmsg_init() (called later from nx_start()/drivers_initialize())
+	 * only registers the rpmsg device_created callback — it never sets
+	 * priv->buffer. Without a buffer, that callback's "if (priv->buffer && ...)"
+	 * guard is always false and the "rpmsg-syslog" endpoint is silently never
+	 * created. priv->buffer is only ever set by syslog_rpmsg_init_early(),
+	 * which no board in the NuttX tree (this one included, until now) calls.
+	 * Must run before nx_start(), hence here rather than board_late_initialize().
+	 */
+	static char g_syslog_rpmsg_buf[4096];
+	syslog_rpmsg_init_early(g_syslog_rpmsg_buf, sizeof(g_syslog_rpmsg_buf));
+#endif
 }
 
 /****************************************************************************
@@ -235,6 +266,20 @@ __EXPORT void led_toggle(int led) { (void)led; }
  ****************************************************************************/
 
 __EXPORT void board_peripheral_reset(int ms) { (void)ms; }
+
+#ifdef CONFIG_RPMSG_UART
+/* drivers_initialize() calls this unconditionally under CONFIG_RPMSG_UART
+ * (drivers/drivers_initialize.c) — every board enabling that option must
+ * provide it (see boards/sim/sim/sim/src/sim_bringup.c for the reference
+ * implementation, which calls uart_rpmsg_init() directly from here).
+ * This board instead calls uart_rpmsg_init() manually from
+ * board_app_initialize(), deliberately timed to run after rptun's ping
+ * channel has already claimed address 0x400 (see the comment there) — so
+ * this hook has nothing left to do. */
+void rpmsg_serialinit(void)
+{
+}
+#endif
 
 /****************************************************************************
  * Name: board_app_initialize
@@ -282,6 +327,22 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	 * addr 0x400" then "creating channel rpmsg-ttyRPMSG0 addr 0x401", and
 	 * rpmsg_ping_test.py is back to 10/10. */
 	uart_rpmsg_init("a53", "RPMSG0", 4096, false);
+#endif
+
+#ifdef CONFIG_MODULES_MAVLINK
+	{
+		/* See the mavlink_main() declaration above for why this is
+		 * started here instead of relying on rc.serial's NSH command
+		 * line. Minimal flags — no -b/-m/-r override, just the device
+		 * — to first confirm bytes flow at all before matching
+		 * rc.serial's full param-driven invocation. */
+		char arg0[] = "mavlink";
+		char arg1[] = "start";
+		char arg2[] = "-d";
+		char arg3[] = "/dev/ttyRPMSG0";
+		char *mavlink_argv[] = { arg0, arg1, arg2, arg3, NULL };
+		mavlink_main(4, mavlink_argv);
+	}
 #endif
 
 #ifdef CONFIG_MODULES_SIMULATION_SIMULATOR_SIH

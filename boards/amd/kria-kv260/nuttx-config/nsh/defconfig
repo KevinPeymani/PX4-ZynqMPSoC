@@ -111,9 +111,56 @@ CONFIG_ZYNQR5_RPTUN=y
 # rpmsg-backed /dev/ttyRPMSG0 — second named endpoint on the same vdev/vring
 # pair as "rpmsg-ping" above (VIRTIO_RPMSG_F_NS is already set in
 # zynqr5_rsc.c, so no new resource-table entry is needed). Registered from
-# zynqr5_rptun_initialize() via uart_rpmsg_init("a53", "RPMSG0", ...) —
-# carries MAVLink between the PX4 mavlink module and the A53/Linux side.
+# board_app_initialize() via uart_rpmsg_init("a53", "RPMSG0", ...) — after
+# rptun's own ping endpoint has already claimed 0x400 — carries MAVLink
+# between the PX4 mavlink module and the A53/Linux side.
 CONFIG_RPMSG_UART=y
+
+# Third rpmsg endpoint: live syslog output to Linux, for visibility NuttX
+# has never had on this board (no working physical console). Bypasses the
+# VFS/uart_dev_s serial layer entirely (drivers/syslog/syslog_rpmsg.c has
+# its own rpmsg_create_ept(), file_operations.open == NULL) — does not
+# touch the unresolved uart_open()/uart_setup() crash. Patched to a fixed
+# src address (0x420) since syslog_rpmsg_init() registers its
+# device_created callback earlier in boot than rptun_dev_start() runs;
+# left at RPMSG_ADDR_ANY it would win 0x400 away from "rpmsg-ping" — the
+# same collision already hit and fixed once for CONFIG_RPMSG_UART above.
+# (0x500, tried first, was itself wrong: the fixed-address bitmap only
+# covers [0x400, 0x47F] — 128 slots from RPMSG_RESERVED_ADDRESSES — so
+# anything at 0x480+ is unconditionally rejected with RPMSG_ERR_PARAM;
+# also had to move the actual rpmsg_create_ept() call off the calling
+# thread — see syslog_rpmsg_create_ept_worker() — since running it
+# synchronously inside rptun_dev_start()'s locked device_created
+# broadcast deadlocked (EDEADLK).)
+# MAX_CHANNELS bumped from the Kconfig default of 1 since the default
+# channel and this one now coexist. CHARDEV explicitly disabled: it
+# defaults to y and tries to register_driver(CONFIG_SYSLOG_DEVPATH, ...)
+# == "/dev/ttyS1" — already claimed by zynqr5_serial.c's arm_serialinit()
+# for UART1. That register_driver() call fails, so syslog_rpmsg_init()
+# returns early and never reaches rpmsg_register_callback() at all —
+# "rpmsg-syslog" silently never gets created. We only need the remote
+# (Linux) side reading via the auto-created rpmsg_char device, not a
+# local NuttX-side chardev, so just disable it instead of picking a new
+# unclaimed devpath.
+CONFIG_SYSLOG_RPMSG=y
+CONFIG_SYSLOG_RPMSG_SERVER_NAME="a53"
+CONFIG_SYSLOG_MAX_CHANNELS=2
+# CONFIG_SYSLOG_RPMSG_CHARDEV is not set
+
+# Needed by the PX4 mavlink module's internal pipe() usage. Without it,
+# libc's pipe() (libs/libc/unistd/lib_pipe.c) has an unresolved reference
+# to nx_pipe() at link time.
+CONFIG_PIPES=y
+
+# Required for PX4's mavlink module: Mavlink::mavlink_open_uart() calls
+# tcgetattr()/tcsetattr() right after open() and treats failure as a hard
+# open failure (3 retries, then gives up entirely, never writing a byte).
+# Without this, uart_ioctl()'s TCGETS/TCSETS cases (drivers/serial/serial.c)
+# are compiled out entirely and any ioctl(TCGETS/TCSETS) on ANY NuttX
+# serial device — real UART or the rpmsg-uart transport — fails ENOTTY.
+# This is almost certainly why mavlink never produced a single byte on
+# /dev/ttyRPMSG0 despite the transport itself working (rpmsg-ping 10/10).
+CONFIG_SERIAL_TERMIOS=y
 
 # UARTs
 # UART0 (0xFF000000) is exclusively owned by the R5F — Linux's device tree

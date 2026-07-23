@@ -3,9 +3,17 @@ CONFIG_BOARD_ARCHITECTURE="cortex-r5"
 CONFIG_BOARD_CONSTRAINED_FLASH=y
 
 # Serial port assignments
-# UART0 (0xFF000000) is NSH console and TEL1.
-# UART1 (0xFF010000) is available for Linux side.
-CONFIG_BOARD_SERIAL_TEL1="/dev/ttyS0"
+# UART0 (0xFF000000) is NSH console — electrically dead on this carrier
+# (no MIO pins assigned), so TEL1 is mapped to the rpmsg-uart transport
+# (/dev/ttyRPMSG0, registered by uart_rpmsg_init() in board_app_initialize())
+# instead of a physical UART. UART1 (0xFF010000) is Linux's own console.
+CONFIG_BOARD_SERIAL_TEL1="/dev/ttyRPMSG0"
+
+# MAVLink over the rpmsg-uart transport above. Needs CONFIG_PIPES, set in
+# nuttx-config/nsh/defconfig (raw NuttX Kconfig options here are silently
+# ignored — this file only understands PX4's own CONFIG_MODULES_*/
+# CONFIG_BOARD_* wrappers).
+CONFIG_MODULES_MAVLINK=y
 
 # Minimal system commands for NSH testing
 CONFIG_SYSTEMCMDS_PARAM=y
