@@ -102,34 +102,27 @@ extern int mavlink_main(int argc, char *argv[]);
  *   Initialize the primary NuttX heap region (Region 0).  A second region
  *   is added by arm_addregion() below.
  *
- *   Layout (the *actual* 2 MB rproc@1ed00000 remoteproc carveout, per the
- *   live Linux devicetree — grown from 256 KB on 2026-07-21 for PX4 module
- *   headroom; NOT the separate 1 MB rpu0vdev0buffer DT node, confirmed
- *   below):
+ *   This override exists because the generic arm_allocateheap.c sizes the
+ *   heap from CONFIG_RAM_END, which on this board runs past the end of the
+ *   remoteproc carveout and into memory Linux is using concurrently.  A heap
+ *   that overruns here does not fault -- the RPU has no MMU and the XMPU is
+ *   unconfigured -- it silently corrupts live rpmsg traffic, so the upper
+ *   bound has to be stated explicitly.
+ *
+ *   Layout of the 2 MB rproc@1ed00000 carveout:
  *     [.text/.data/.bss]  : 0x1ED00000 .. _ebss
  *     [idle stack]        : [_ebss, g_idle_topstack)       (2 KB)
- *     [heap region 0]     : [g_idle_topstack, 0x1EEFFE00)  (1876876 B =
- *                                                            ~1.79 MB,
- *                                                            confirmed via
- *                                                            the 0x1EEFFE04
- *                                                            breadcrumb on
- *                                                            hardware
- *                                                            2026-07-21; was
- *                                                            ~44 KB before
- *                                                            the grow)
+ *     [heap region 0]     : [g_idle_topstack, 0x1EEFFE00)  (~1.79 MB)
  *     [debug scratchpad]  : [0x1EEFFE00, 0x1EEFFFFF]       (512 B)
- *     [vring0 TX]         : [0x1EF00000, 0x1EF04000)       (16 KB, DT fixed)
- *     [vring1 RX]         : [0x1EF04000, 0x1EF08000)       (16 KB, DT fixed)
- *     [rpu0vdev0buffer]   : [0x1EF08000, 0x1F008000)       (1 MB, DT fixed,
- *                                                            LIVE rpmsg
- *                                                            message-buffer
- *                                                            pool — NuttX
- *                                                            must NOT touch
- *                                                            this; see
- *                                                            arm_addregion())
  *
- *   The default arm_allocateheap.c uses CONFIG_RAM_END which reaches past
- *   the carveout into the rpmsg vring region; hence this override.
+ *   Immediately above, in separate DT nodes and NOT part of this carveout:
+ *     [vring0 TX]         : [0x1EF00000, 0x1EF04000)       (16 KB)
+ *     [vring1 RX]         : [0x1EF04000, 0x1EF08000)       (16 KB)
+ *     [rpu0vdev0buffer]   : [0x1EF08000, 0x1F008000)       (1 MB)
+ *
+ *   rpu0vdev0buffer is the live rpmsg message-buffer pool that this core and
+ *   Linux exchange traffic through.  It must never be handed to the heap; see
+ *   arm_addregion() for the bug that resulted when it was.
  ****************************************************************************/
 
 void up_allocate_heap(void **heap_start, size_t *heap_size)
@@ -142,11 +135,13 @@ void up_allocate_heap(void **heap_start, size_t *heap_size)
 	*heap_start = (void *)start;
 	*heap_size = size;
 
-	/* DBG (2026-07-21, Task B): log the actual values fed to kumm_initialize()
-	 * so they can be compared on hardware against the intended constant
-	 * 0x1EEFFE00 boundary.  0x1EEFFE00/04 are unused by every other
-	 * breadcrumb in this codebase (verified via `grep -rn 1EEFFE`) and sit
-	 * inside the debug scratchpad itself, not the heap. */
+	/* Publish the values actually handed to the memory manager.  start is
+	 * derived from g_idle_topstack, which depends on link-time section sizes,
+	 * so it cannot be predicted from the source: reading it back is the only
+	 * way to confirm the heap really ends at 0x1EEFFE00 and has not grown into
+	 * the scratchpad as .bss expanded.  These two words live inside the
+	 * scratchpad itself, below every other breadcrumb, so writing them costs no
+	 * heap.  See the address map in nuttx-config/scripts/script.ld. */
 	*((volatile uint32_t *)0x1EEFFE00u) = (uint32_t)start;
 	*((volatile uint32_t *)0x1EEFFE04u) = (uint32_t)size;
 	__asm__ volatile("dsb sy" ::: "memory");
@@ -159,47 +154,36 @@ void up_allocate_heap(void **heap_start, size_t *heap_size)
  *   Add the second DDR heap region to the kernel memory manager.
  *   Called by arm_initialize() when CONFIG_MM_REGIONS > 1.
  *
- *   Region 1 previously lived at [0x1ED48000, 0x1EE00000) — entirely inside
- *   what was then the live Linux DT reserved-memory node rpu0vdev0buffer
- *   (0x1ED48000-0x1EE48000, 1 MB, no-map), which is the actual OpenAMP/
- *   rpmsg shared message-buffer pool that Linux and this R5F actively
- *   exchange rpmsg traffic through via rptun/libmetal.  Any malloc() that
- *   spilled past Region 0 was landing inside live rpmsg buffer memory —
- *   a self-inflicted heap/IPC overlap.  Fixed (2026-07-10, before the
- *   2026-07-21 carveout grow below) by relocating Region 1 to the rpu1
- *   (second R5 core) carveout instead:
+ *   Region 1 is placed on the RPU1 carveout, which needs explaining because it
+ *   looks like an unrelated core's memory -- it is.  There is no free DDR
+ *   adjacent to Region 0: the addresses directly above it belong to
+ *   rpu0vdev0buffer, the live rpmsg message-buffer pool.  Region 1 was
+ *   originally placed there, and any malloc() that spilled out of Region 0
+ *   then wrote into buffers Linux was actively reading -- corrupting IPC
+ *   rather than faulting, since the RPU has no MMU.
  *
- *   NOTE (2026-07-21): the addresses in the paragraph above are historical —
- *   rpu0vdev0buffer has since moved to 0x1EF08000-0x1F008000 as part of
- *   growing rproc_0_reserved from 256 KB to 2 MB (see up_allocate_heap()
- *   above and system-user.dtsi).  Region 1 itself is unaffected: it still
- *   lives on the unused rpu1 carveout below, unrelated to RPU0's growth.
+ *   The RPU1 nodes are the closest thing to genuinely free DDR reachable
+ *   without editing the devicetree or BOOT.BIN.  Nothing in this tree targets
+ *   R5F-1; remoteproc1 is never started, and all four nodes carry no-map so
+ *   Linux will never hand the memory to a process either:
  *
- *     rproc@3ef00000            0x3ef00000  256 KB  (code/data, unused —
- *                                                     no firmware loaded)
+ *     rproc@3ef00000            0x3ef00000  256 KB  (no firmware loaded)
  *     rpu1vdev0vring0@3ef40000  0x3ef40000   16 KB  (unused)
  *     rpu1vdev0vring1@3ef44000  0x3ef44000   16 KB  (unused)
  *     rpu1vdev0buffer@3ef48000  0x3ef48000    1 MB  (unused)
  *
- *   This project only loads NuttX onto R5F-0 (remoteproc0); remoteproc1
- *   (r5f@1) is offline and nothing in this tree targets it.  All four rpu1
- *   nodes carry no-map, so Linux's normal allocator will never hand this
- *   memory to a process; it is the closest thing to "genuinely free" DDR
- *   reachable without touching the devicetree/BOOT.BIN.  Region 1 keeps its
- *   original size (736 KB) — only the physical location moved — to avoid
- *   changing already-verified heap capacity/behavior.
- *
- *   CAVEAT: if this board is ever extended to load a second R5F image onto
- *   RPU1 via remoteproc1, this Region 1 placement MUST move again first —
- *   it would collide with RPU1's own code/vring/buffer carveout exactly
- *   the way the original bug collided with RPU0's buffer pool.
+ *   This placement is only valid while RPU1 stays idle.  Loading any firmware
+ *   onto R5F-1 via remoteproc1 must move Region 1 first, or it reproduces the
+ *   original corruption against RPU1's carveout instead of RPU0's.
  ****************************************************************************/
 
 #if CONFIG_MM_REGIONS > 1
 void arm_addregion(void)
 {
-	/* CONFIG_BUILD_FLAT: single unified heap, use umm_addregion.
-	 * rpu1 (unused second R5 core) carveout: 0x3EF00000 + 736 KB. */
+	/* umm_addregion() rather than kmm_addregion(): CONFIG_BUILD_FLAT means
+	 * there is one unified heap.  736 KB spans the rproc node, both RPU1
+	 * vrings, and part of rpu1vdev0buffer -- safe only because no firmware runs
+	 * on R5F-1, so none of those nodes has an owner. */
 	umm_addregion((FAR void *)0x3EF00000u, 0x000B8000u);
 }
 #endif
@@ -209,21 +193,25 @@ void arm_addregion(void)
  *
  * Description:
  *   Called by arm_boot() after FPU and UART early init, before nx_start().
- *   No scheduler; no blocking.  Phase 1: stub.
+ *   The scheduler is not running, so nothing here may block.
  ****************************************************************************/
 
 __EXPORT void zynqr5_board_initialize(void)
 {
-	*((volatile uint32_t *)0x1EEFFFB8u) = 0xB00710A1u;
+	*((volatile uint32_t *)0x1EEFFFB8u) = 0xB00710A1u;  /* reached board init */
 
 #ifdef CONFIG_SYSLOG_RPMSG
-	/* syslog_rpmsg_init() (called later from nx_start()/drivers_initialize())
-	 * only registers the rpmsg device_created callback — it never sets
-	 * priv->buffer. Without a buffer, that callback's "if (priv->buffer && ...)"
-	 * guard is always false and the "rpmsg-syslog" endpoint is silently never
-	 * created. priv->buffer is only ever set by syslog_rpmsg_init_early(),
-	 * which no board in the NuttX tree (this one included, until now) calls.
-	 * Must run before nx_start(), hence here rather than board_late_initialize().
+	/* Allocate the syslog-over-rpmsg buffer here, which no other NuttX board
+	 * does, because syslog_rpmsg_init() -- called later from
+	 * drivers_initialize() -- never sets priv->buffer itself.  Its
+	 * device_created callback is guarded by "if (priv->buffer && ...)", so with
+	 * no buffer the "rpmsg-syslog" endpoint is silently never created and
+	 * syslog output disappears with no error anywhere.  Only
+	 * syslog_rpmsg_init_early() sets priv->buffer, and it has to run before
+	 * nx_start(), which is why this cannot move to board_late_initialize().
+	 *
+	 * The buffer is static rather than malloc'd because the heap is not yet
+	 * initialised at this point in boot.
 	 */
 	static char g_syslog_rpmsg_buf[4096];
 	syslog_rpmsg_init_early(g_syslog_rpmsg_buf, sizeof(g_syslog_rpmsg_buf));
@@ -235,17 +223,23 @@ __EXPORT void zynqr5_board_initialize(void)
  *
  * Description:
  *   Called by nx_start_task() after the scheduler is running
- *   (CONFIG_BOARD_LATE_INITIALIZE=y).  Phase 1: stub.
+ *   (CONFIG_BOARD_LATE_INITIALIZE=y).  This is the earliest point at which
+ *   rptun may be brought up, since rptun_initialize() creates a thread and
+ *   takes semaphores.
  ****************************************************************************/
 
 __EXPORT void board_late_initialize(void)
 {
-	*((volatile uint32_t *)0x1EEFFF3Cu) = 0xCA110001u; /* board_late_initialize entered */
+	/* Bracket the rptun bring-up: it is the one call here that can hang
+	 * (it waits on the A53) or fault, and it happens before any console or
+	 * syslog output is possible. */
+
+	*((volatile uint32_t *)0x1EEFFF3Cu) = 0xCA110001u; /* entered */
 	__asm__ volatile("dsb sy" ::: "memory");
 #ifdef CONFIG_ZYNQR5_RPTUN
 	zynqr5_rptun_initialize();
 #endif
-	*((volatile uint32_t *)0x1EEFFF38u) = 0xCA110002u; /* board_late_initialize returned */
+	*((volatile uint32_t *)0x1EEFFF38u) = 0xCA110002u; /* returned */
 	__asm__ volatile("dsb sy" ::: "memory");
 }
 
@@ -325,7 +319,21 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	 * endpoint at 0x400 and broke rpmsg-ping (0/10 pings). Verified fixed
 	 * on hardware 2026-07-22: dmesg shows "creating channel rpmsg-ping
 	 * addr 0x400" then "creating channel rpmsg-ttyRPMSG0 addr 0x401", and
-	 * rpmsg_ping_test.py is back to 10/10. */
+	 * rpmsg_ping_test.py is back to 10/10.
+	 *
+	 * Tried growing this ring 4096 -> 16384/32768 (2026-07-24) as a
+	 * mitigation for PX4's mavlink parameter-dump bug (mavlink_parameters.cpp
+	 * advances its send index before checking the send succeeded, so a
+	 * momentarily-full TX buffer permanently drops that parameter). Reverted:
+	 * under real QGroundControl load, kernel logs showed
+	 * "zynqmp-ipi-mbox ... Failed to kick remote" / "Try increasing
+	 * MBOX_TX_QUEUE_LEN" bursts, and the parameter loss became *worse* and
+	 * non-deterministic (different params missing each attempt, sometimes
+	 * the whole dump failing) instead of the original deterministic
+	 * COM_DL_LOSS_T/NAV_DLL_ACT-only loss. The actual bottleneck under real
+	 * load looks like it's the Linux-side IPI mailbox queue depth
+	 * (MBOX_TX_QUEUE_LEN, zynqmp-ipi-mailbox kernel driver), not this
+	 * R5F-side ring -- investigate there before retrying this lever. */
 	uart_rpmsg_init("a53", "RPMSG0", 4096, false);
 #endif
 
