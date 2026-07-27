@@ -87,6 +87,29 @@ CONFIG_SYSTEM_NSH_STACKSIZE=8192
 # Scheduler
 CONFIG_RR_INTERVAL=200
 
+# 1 kHz system tick (default is 10 000 us / 100 Hz).
+#
+# Everything that sleeps on this board is quantised to one tick, because
+# clock_time2ticks() rounds *up*: nxsig_usleep(1000) on a 100 Hz tick does not
+# sleep 1 ms, it sleeps until the next 10 ms boundary.  Two consequences that
+# were both being paid before this was set:
+#
+#   - rptun's receive path polls the IPI with nxsig_usleep(1000) (see
+#     ZYNQR5_RPTUN_POLL_USEC in drivers/rptun/rptun.c).  At a 100 Hz tick that
+#     poll could not run faster than 100 Hz no matter what the constant said,
+#     and an rpmsg ping RTT crosses the gate ~4 times -- measured 34.5 ms avg,
+#     clustered at 39.8 ms, against 0.2 ms for the transport itself.
+#   - hrt_absolute_time() is CLOCK_MONOTONIC-backed (platforms/nuttx/src/px4/
+#     amd/zynqr5/hrt/hrt.c), so the whole PX4 timebase -- MAVLink timestamps,
+#     work-queue deadlines, the sih 200 Hz loop, which a 100 Hz tick cannot
+#     even express -- had 10 ms resolution.
+#
+# The TTC interval is derived from this value in zynqr5_timerisr.c, so no
+# other change is needed: 6.25 MHz / 1 kHz = 6250 counts, comfortably inside
+# the 32-bit TTC interval register.  Cost is 1000 timer ISRs/s on a 500 MHz
+# R5F, well under 1% CPU.
+CONFIG_USEC_PER_TICK=1000
+
 # Debugging
 CONFIG_DEBUG_FEATURES=y
 CONFIG_DEBUG_SYMBOLS=y
