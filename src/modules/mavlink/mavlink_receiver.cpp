@@ -95,6 +95,33 @@ MavlinkReceiver::~MavlinkReceiver()
 	_sensor_optical_flow_pub.unadvertise();
 }
 
+/* Board-specific compile-time override, mirroring MAVLINK_TASK_PRIORITY in
+ * mavlink_main.cpp and SIH_TASK_PRIORITY in sih.cpp.
+ *
+ * The default here is SCHED_PRIORITY_MAX - 80 == 175, which on the Kria KV260
+ * R5F port sits *below* sih's 180 (CONFIG_RPTUN_PRIORITY - 44).  sih is a
+ * tight simulation loop, so once it starts the receive thread stops being
+ * scheduled at all: it is left permanently runnable inside its poll(), the
+ * tty receive ring is never drained, and every inbound MAVLink byte from the
+ * GCS is eventually rejected by uart_recvchars_dma()'s is_full early-out.
+ * The vehicle keeps transmitting telemetry -- mavlink_main is at 204, above
+ * sih -- so the link looks healthy from the GCS while no command, parameter
+ * request or mission upload is ever acted on.
+ *
+ * This is the same starvation that 7db49451ec fixed for the *sender* by
+ * giving it its own tier above sih; that commit only touched
+ * mavlink_main.cpp, so the receiver kept the upstream default and stayed
+ * below sih.  Give it its own tier too, one step under the sender so the two
+ * mavlink threads never round-robin against each other (CONFIG_RR_INTERVAL is
+ * 200 ms on this board, which makes same-tier sharing very coarse).
+ *
+ * Scoped to this board; every other target keeps SCHED_PRIORITY_MAX - 80. */
+#if defined(CONFIG_ZYNQR5_RPTUN)
+#  define MAVLINK_RECEIVER_TASK_PRIORITY (CONFIG_RPTUN_PRIORITY - 21)
+#else
+#  define MAVLINK_RECEIVER_TASK_PRIORITY (SCHED_PRIORITY_MAX - 80)
+#endif
+
 static constexpr vehicle_odometry_s vehicle_odometry_empty {
 	.timestamp = 0,
 	.timestamp_sample = 0,
@@ -3703,9 +3730,11 @@ MavlinkReceiver::run()
 	ssize_t nread = 0;
 	hrt_abstime last_send_update = 0;
 
+
 	while (!_should_exit.load()) {
 
 		// check for parameter updates
+
 		if (_parameter_update_sub.updated()) {
 			// clear update
 			parameter_update_s pupdate;
@@ -3721,6 +3750,7 @@ MavlinkReceiver::run()
 		int ret = poll(&fds[0], 1, timeout);
 
 		if (ret > 0) {
+
 			if (_mavlink.get_protocol() == Protocol::SERIAL) {
 				/* non-blocking read. read may return negative values */
 				nread = ::read(fds[0].fd, buf, sizeof(buf));
@@ -4044,13 +4074,21 @@ void MavlinkReceiver::start()
 
 	struct sched_param param;
 	(void)pthread_attr_getschedparam(&receiveloop_attr, &param);
-	param.sched_priority = SCHED_PRIORITY_MAX - 80;
+	param.sched_priority = MAVLINK_RECEIVER_TASK_PRIORITY;
 	(void)pthread_attr_setschedparam(&receiveloop_attr, &param);
 
 	pthread_attr_setstacksize(&receiveloop_attr,
 				  PX4_STACK_ADJUSTED(sizeof(MavlinkReceiver) + 2840 + MAVLINK_RECEIVER_NET_ADDED_STACK));
 
-	pthread_create(&_thread, &receiveloop_attr, MavlinkReceiver::start_trampoline, (void *)this);
+	/* Report a failure to spawn the thread.  Silently ignoring it leaves the
+	 * link transmitting telemetry while acting on nothing the GCS sends,
+	 * which is indistinguishable from a healthy link at the GCS end. */
+
+	int ret = pthread_create(&_thread, &receiveloop_attr, MavlinkReceiver::start_trampoline, (void *)this);
+
+	if (ret != 0) {
+		PX4_ERR("failed to start receive thread (%i)", ret);
+	}
 
 	pthread_attr_destroy(&receiveloop_attr);
 }
