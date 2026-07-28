@@ -12,11 +12,13 @@
 #include "board_config.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <syslog.h>
+#include <unistd.h>
 
 #include <arch/board/board.h>
 #include <nuttx/board.h>
@@ -335,6 +337,78 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	 * (MBOX_TX_QUEUE_LEN, zynqmp-ipi-mailbox kernel driver), not this
 	 * R5F-side ring -- investigate there before retrying this lever. */
 	uart_rpmsg_init("a53", "RPMSG0", 4096, false);
+
+	/* Second rpmsg tty, registered as /dev/console: this is how PX4's own
+	 * PX4_ERR/PX4_INFO output gets off the board at all.
+	 *
+	 * Until now there was no such path.  stdout/stderr went to /dev/console ==
+	 * UART0, which has no MIO pin assigned on this carrier, so the flight
+	 * stack's diagnostics were written to a dead port.  Neither of the other
+	 * two plausible channels carries them either: syslog-over-rpmsg is wired
+	 * up correctly but only ever sees NuttX kernel syslog() calls, and MAVLink
+	 * STATUSTEXT only carries explicit mavlink_log_* calls.  Module start
+	 * failures were therefore completely silent, and the only diagnostic left
+	 * was inferring which modules were alive from which parameter prefixes
+	 * appeared over MAVLink.
+	 *
+	 * Registered as a plain tty, NOT as /dev/console (isconsole=false).
+	 * Owning /dev/console was tried and reverted: it gives NSH a stdin that
+	 * reports EOF, so nsh_session() returns immediately instead of blocking
+	 * forever, the init task exits and gets respawned, and the entire rcS
+	 * sequence re-runs in a tight loop -- 31958 boots in 60 s, measured on
+	 * hardware.  Only stdout and stderr are moved here (see below); stdin is
+	 * deliberately left on the dead UART0 console so it still blocks.
+	 *
+	 * Two ordering constraints, both load-bearing:
+	 *
+	 *   - It must come *after* the RPMSG0 call above.  Endpoint addresses are
+	 *     handed out sequentially from 0x400, and the Linux bridge hardcodes
+	 *     EPT_DST = 0x401 for "rpmsg-ttyRPMSG0"; registering this first would
+	 *     shift MAVLink to 0x402 and break the bridge.  This one lands on
+	 *     0x402.
+	 *   - It must happen here, in board_app_initialize(), rather than later.
+	 *     nsh_initialize() runs boardctl(BOARDIOC_INIT) -- and hence this
+	 *     function -- before nsh_consolemain() reaches nsh_initscript(), which
+	 *     is where rcS actually executes.  Registering the console here is
+	 *     therefore early enough to capture rcS and everything it starts,
+	 *     which is the whole point.
+	 *
+	 * Deliberately a separate endpoint rather than setting isconsole on
+	 * RPMSG0: that one carries the MAVLink byte stream, and interleaving
+	 * console text into it would corrupt every frame.
+	 */
+
+	uart_rpmsg_init("a53", "PX4LOG", 4096, false);
+
+	/* Point stdout and stderr -- and only those -- at that tty.
+	 *
+	 * This runs in the init task (nsh_main -> nsh_initialize -> boardctl), and
+	 * boardctl(BOARDIOC_INIT) happens before nsh_consolemain() reaches
+	 * nsh_initscript(), so the descriptors are in place before rcS runs and
+	 * propagate to everything rcS starts (CONFIG_FDCLONE_STDIO gives child
+	 * tasks copies).  Placing this ahead of the module starts below means they
+	 * inherit it too.
+	 *
+	 * fd 0 is left alone on purpose: NSH's session loop reads stdin, and a
+	 * descriptor that returns EOF makes it exit and respawn in a loop.  The
+	 * dead UART0 console blocks instead, which is the behaviour NSH has always
+	 * had on this board.
+	 */
+
+	{
+		int lfd = open("/dev/ttyPX4LOG", O_WRONLY);
+
+		if (lfd >= 0) {
+			dup2(lfd, 1);
+			dup2(lfd, 2);
+
+			if (lfd > 2) {
+				close(lfd);
+			}
+
+			dprintf(1, "\n[boot] kria-kv260 R5F: PX4 stdout/stderr on rpmsg-ttyPX4LOG\n");
+		}
+	}
 #endif
 
 #ifdef CONFIG_MODULES_MAVLINK

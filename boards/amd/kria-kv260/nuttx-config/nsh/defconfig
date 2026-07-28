@@ -191,6 +191,14 @@ CONFIG_SERIAL_TERMIOS=y
 # UART1 (0xFF010000) is Linux's own console (ttyPS1/serial1, status="okay") —
 # it must never be the NuttX console, or both cores fight over the same
 # CR/IER/IDR/ISR/FIFO registers.
+# UART0 stays the console even though it is electrically dead (no MIO pin on
+# this carrier), because /dev/console is what NSH's stdin blocks on.  Making a
+# live rpmsg tty the console instead was tried and reverted: with a readable
+# stdin, nsh_session() returns as soon as it sees EOF instead of blocking
+# forever, the init task exits and is respawned, and the whole rcS sequence
+# re-runs in a tight loop (measured: 31958 boots in 60 s).  PX4's diagnostic
+# output is redirected to an rpmsg tty by fd, not by owning /dev/console --
+# see the PX4LOG endpoint in src/init.c.
 CONFIG_ZYNQR5_UART0=y
 CONFIG_ZYNQR5_UART0_CONSOLE=y
 CONFIG_ZYNQR5_UART1=y
