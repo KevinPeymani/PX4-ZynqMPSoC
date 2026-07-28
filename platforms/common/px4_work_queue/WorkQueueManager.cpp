@@ -375,10 +375,25 @@ WorkQueueManagerStart()
 
 		_wq_manager_should_exit.store(false);
 
+		/* The Kria KV260 R5F needs more here than the 1280 every other target
+		 * uses.  Scoped to that board rather than raised globally: this task
+		 * exists on every PX4 target, including 128 KB F4s, and an
+		 * unconditional +4.8 KB there is not affordable.
+		 *
+		 * TODO: find what actually consumes it on that board.  The increase was
+		 * arrived at empirically while chasing a scheduling failure and has not
+		 * been traced to a specific consumer, so it is a workaround, not a
+		 * measurement. */
+#if defined(CONFIG_ARCH_CHIP_ZYNQR5)
+		const size_t wq_manager_stack = PX4_STACK_ADJUSTED(6144);
+#else
+		const size_t wq_manager_stack = PX4_STACK_ADJUSTED(1280);
+#endif
+
 		int task_id = px4_task_spawn_cmd("wq:manager",
 						 SCHED_DEFAULT,
 						 SCHED_PRIORITY_MAX,
-						 PX4_STACK_ADJUSTED(6144),
+						 wq_manager_stack,
 						 (px4_main_t)&WorkQueueManagerRun,
 						 nullptr);
 
