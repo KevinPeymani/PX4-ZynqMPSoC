@@ -202,6 +202,7 @@ __EXPORT void zynqr5_board_initialize(void)
 {
 	*((volatile uint32_t *)0x1EEFFFB8u) = 0xB00710A1u;  /* reached board init */
 
+
 #ifdef CONFIG_SYSLOG_RPMSG
 	/* Allocate the syslog-over-rpmsg buffer here, which no other NuttX board
 	 * does, because syslog_rpmsg_init() -- called later from
@@ -351,13 +352,24 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	 * was inferring which modules were alive from which parameter prefixes
 	 * appeared over MAVLink.
 	 *
-	 * Registered as a plain tty, NOT as /dev/console (isconsole=false).
-	 * Owning /dev/console was tried and reverted: it gives NSH a stdin that
-	 * reports EOF, so nsh_session() returns immediately instead of blocking
-	 * forever, the init task exits and gets respawned, and the entire rcS
-	 * sequence re-runs in a tight loop -- 31958 boots in 60 s, measured on
-	 * hardware.  Only stdout and stderr are moved here (see below); stdin is
-	 * deliberately left on the dead UART0 console so it still blocks.
+	 * Registered as a plain tty, NOT as /dev/console (isconsole=false), and
+	 * only stdout/stderr are moved onto it; stdin stays on the dead UART0.
+	 *
+	 * The original reason given here -- that a readable stdin makes
+	 * nsh_session() return on EOF, so the init task exits and is respawned --
+	 * was wrong on both counts.  NuttX has no mechanism to respawn
+	 * CONFIG_INIT_ENTRYPOINT (nxtask_create for it appears only in
+	 * nx_start_application(), called once), and with CONFIG_NSH_CLE=y
+	 * nsh_session() cannot return on a read failure at all: the CLE branch
+	 * `continue`s rather than breaking.  The "31958 boots in 60 s" that
+	 * motivated it was a measurement artifact -- the Linux-side reader was
+	 * replaying stale bytes out of this tty's 4096-byte transmit ring, so the
+	 * same ~100 lines of boot log were being counted over and over.  A
+	 * breadcrumb counting entries to this function reads exactly 1.
+	 *
+	 * Keeping stdin off this endpoint is still the right call, just for a
+	 * duller reason: a shell reading a descriptor nobody writes to has no
+	 * business on the same channel as the diagnostic log.
 	 *
 	 * Two ordering constraints, both load-bearing:
 	 *
