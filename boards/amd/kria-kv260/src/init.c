@@ -395,8 +395,20 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	 * had on this board.
 	 */
 
+	/* O_NONBLOCK is essential, not a refinement.  uart_write() derives
+	 * "oktoblock" from the absence of O_NONBLOCK, so a blocking descriptor
+	 * lets uart_putxmitchar() sleep on dev->xmitsem *while holding
+	 * dev->xmit.sem* once the ring is full.  With nothing on the Linux side
+	 * draining this endpoint, the first task to fill 4096 bytes of log then
+	 * blocks forever, and anything else that writes to stdout or polls the tty
+	 * piles up behind that semaphore -- measured as PX4 answering rpmsg pings
+	 * normally while failing every parameter request.  A diagnostic console
+	 * must never be able to stall the flight stack, so let writes fail with
+	 * -EAGAIN and drop the output instead.
+	 */
+
 	{
-		int lfd = open("/dev/ttyPX4LOG", O_WRONLY);
+		int lfd = open("/dev/ttyPX4LOG", O_WRONLY | O_NONBLOCK);
 
 		if (lfd >= 0) {
 			dup2(lfd, 1);
