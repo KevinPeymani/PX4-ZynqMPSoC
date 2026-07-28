@@ -9,6 +9,22 @@
 param set-default BAT1_V_DIV 0.0
 param set-default BAT1_A_PER_V 0.0
 
+# Airframe: SIH Quadcopter X (ROMFS/px4fmu_common/init.d/airframes/
+# 1100_rc_quad_x_sih.hil).  Without this, SYS_AUTOSTART is unset, rcS logs
+# "ERROR [init] No airframe file found for SYS_AUTOSTART value", leaves
+# VEHICLE_TYPE=none, and therefore never reaches the vehicle-type dispatch
+# that runs rc.mc_apps -- so none of the flight-stack modules start.  The
+# visible symptom is QGroundControl reporting parameters "missing from
+# firmware" (RC_MAP_*, COM_FLTMODE*, RTL_*, ...), because PX4 only publishes
+# parameters that a running module has param_find()-ed.
+#
+# 1100 matches what this board actually simulates: the airframe file sets
+# SYS_HITL 2 (start SIH, skip real sensor startup), SIH_VEHICLE_TYPE 0 and the
+# CA_ROTOR* geometry for a quad X.  It also sets CBRK_SUPPLY_CHK to allow
+# arming with no real battery, which this board needs since the R5F has no
+# battery ADC (see the BAT1 divisors above).
+param set-default SYS_AUTOSTART 1100
+
 # No SD card / filesystem on this board: dataman missions live in RAM.
 param set-default SYS_DM_BACKEND 1
 

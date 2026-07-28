@@ -45,3 +45,28 @@ CONFIG_MODULES_DATAMAN=y
 # CONFIG_DATAMAN_PERSISTENT_STORAGE is not set
 CONFIG_NUM_MISSION_ITMES_SUPPORTED=50
 CONFIG_MODULES_LAND_DETECTOR=y
+
+# Multicopter control stack + pilot input.
+#
+# Required by the SYS_AUTOSTART=1100 (SIH Quadcopter X) airframe set in
+# init/rc.board_defaults: rcS dispatches on VEHICLE_TYPE to rc.mc_apps, which
+# starts control_allocator, mc_rate_control, mc_att_control,
+# mc_hover_thrust_estimator, flight_mode_manager, mc_pos_control and
+# land_detector.  rcS's common section additionally starts rc_update and
+# manual_control.
+#
+# These are not optional extras on this board -- they are why QGroundControl
+# reported parameters "missing from firmware".  PX4 only publishes parameters
+# that something has actually param_find()-ed, so a module that never starts
+# has no parameters at all from the GCS's point of view.  Without an airframe
+# and without these modules, RC_MAP_* (rc_update), COM_FLTMODE1-6
+# (manual_control), RTL_*/MIS_* (navigator), CA_* (control_allocator),
+# LNDMC_* (land_detector) and MPC_* (mc_pos_control) were all absent, and QGC
+# names whichever of those happen to be on its own required list.
+CONFIG_MODULES_RC_UPDATE=y
+CONFIG_MODULES_MANUAL_CONTROL=y
+CONFIG_MODULES_MC_RATE_CONTROL=y
+CONFIG_MODULES_MC_ATT_CONTROL=y
+CONFIG_MODULES_MC_POS_CONTROL=y
+CONFIG_MODULES_MC_HOVER_THRUST_ESTIMATOR=y
+CONFIG_MODULES_FLIGHT_MODE_MANAGER=y
