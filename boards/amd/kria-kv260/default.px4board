@@ -1,6 +1,16 @@
 CONFIG_BOARD_TOOLCHAIN="arm-none-eabi"
 CONFIG_BOARD_ARCHITECTURE="cortex-r5"
-CONFIG_BOARD_CONSTRAINED_FLASH=y
+# CONSTRAINED_FLASH is deliberately NOT set.  It gates more than its name
+# suggests: cmake/kconfig.cmake excludes parameters.json.xz,
+# events/all_events.json.xz and actuators.json.xz from ROMFS when it is on,
+# which flips component_general.json's metadata URIs from mftp://etc/extras/
+# to an S3 URL for a board PX4's CI has never published.  QGroundControl then
+# cannot load the events metadata, so EventHandler::healthAndArmingChecksSupported()
+# returns false, it falls back to guessing readiness from SYS_STATUS, and it
+# hides the Arming Check Report entirely -- i.e. it stops telling you which
+# preflight check is failing, which is exactly the information needed here.
+# The three files total ~68 KB against a 22 MB DDR-resident image, so there is
+# nothing constrained about this target's flash.
 
 # Serial port assignments
 # UART0 (0xFF000000) is NSH console — electrically dead on this carrier

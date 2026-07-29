@@ -6,8 +6,30 @@
 # Battery ADC is not connected on the R5F side; set divisors to zero
 # so the battery estimator doesn't generate bogus voltage readings.
 #
-param set-default BAT1_V_DIV 0.0
-param set-default BAT1_A_PER_V 0.0
+# There is no battery ADC on the R5 side at all.  BAT1_SOURCE -1 says that
+# honestly, and it is also the only value QGroundControl's PowerComponent
+# accepts as "setup complete" without BAT1_N_CELLS/V_CHARGED/V_EMPTY being set.
+# The divisors this replaces were harmless but meaningless -- PX4's own power
+# and battery checks already early-return here, on CBRK_SUPPLY_CHK and on
+# hil_state == HIL_STATE_ON, and MODULES_BATTERY_STATUS is not even built.
+param set-default BAT1_SOURCE -1
+
+# No RC receiver exists on this board.  QGC's radio setup page is only
+# considered complete when RC_MAP_ROLL/PITCH/YAW/THROTTLE are mapped *or*
+# COM_RC_IN_MODE is exactly 1 -- it hard-codes 1, so 4 ("stick input disabled")
+# does not satisfy it and is strictly worse.  1 also makes rcCalibrationCheck
+# early-return and still accepts MANUAL_CONTROL from QGC's virtual joystick.
+# SITL already sets this for itself; SIH-on-real-hardware does not, which is
+# why every "it just works in SIH" report comes from SITL.
+#
+# Note this does NOT make manual modes armable: modeCheck.cpp clears the
+# arming bits for every mode requiring manual control regardless of
+# COM_RC_IN_MODE -- that parameter only changes the reported severity.
+# Autonomous modes (takeoff/mission/loiter) can arm without it.
+param set-default COM_RC_IN_MODE 1
+
+# Recommended by PX4's SIH documentation for estimator performance.
+param set-default SENS_GPS0_DELAY 0
 
 # Airframe: SIH Quadcopter X (ROMFS/px4fmu_common/init.d/airframes/
 # 1100_rc_quad_x_sih.hil).  Without this, SYS_AUTOSTART is unset, rcS logs
