@@ -33,6 +33,7 @@
  * zynqr5_board_initialize() below, before nx_start(), so early-boot and
  * assertion output is captured. */
 void zynqr5_trace_init(void);
+int zynqr5_trace_register(void);
 
 /* Linker-exported symbol — arm_head.S .rodata word = _ebss +
  * CONFIG_IDLETHREAD_STACKSIZE */
@@ -136,10 +137,10 @@ extern int mavlink_main(int argc, char *argv[]);
 void up_allocate_heap(void **heap_start, size_t *heap_size)
 {
 	uintptr_t start = g_idle_topstack; /* _ebss + CONFIG_IDLETHREAD_STACKSIZE */
-	/* The RSC_TRACE ring occupies [0x1EEFDE00, 0x1EEFFE00) and the debug
+	/* The RSC_TRACE ring occupies [0x1EEF7E00, 0x1EEFFE00) and the debug
 	 * scratchpad [0x1EEFFE00, 0x1EEFFFFF]; the heap must stop below both.
 	 * TRACE_DA in arch/arm/src/zynqr5/zynqr5_rsc.c has to agree with this. */
-	uintptr_t end = 0x1EEFDE00u;
+	uintptr_t end = 0x1EEF7E00u;
 
 	uintptr_t size = (end > start) ? (end - start) : 0;
 
@@ -404,62 +405,41 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	 * console text into it would corrupt every frame.
 	 */
 
-	/* 16 KB, not the 4 KB used for MAVLink.  Nothing on the Linux side can
-	 * attach to this endpoint until the R5F has announced it, which is well
-	 * after board_app_initialize() -- so the entire early boot log has to
-	 * survive in the ring until a reader shows up.  With 4 KB and
-	 * O_NONBLOCK (which drops rather than blocks, deliberately -- see
-	 * below) the whole of rcS scrolled out of the ring before anything read
-	 * it, and module start failures were invisible even with the console
-	 * working.  PX4's boot log is a few KB.
+	/* Point stdout and stderr at the RSC_TRACE ring.
 	 *
-	 * The proper fix is an RSC_TRACE resource-table entry, which Linux exposes
-	 * as a trace0 file under /sys/kernel/debug/remoteproc and which needs no
-	 * peer to drain it; struct rptun_rsc_s already carries the field.  This is
-	 * the cheap stand-in. */
-	uart_rpmsg_init("a53", "PX4LOG", 16384, false);
-
-	/* Point stdout and stderr -- and only those -- at that tty.
+	 * This replaces a second uart_rpmsg endpoint (/dev/ttyPX4LOG) that used to
+	 * carry them.  That endpoint wedged after a few kilobytes and then replayed
+	 * its transmit ring, which is worse than having no console at all: the
+	 * replayed text was counted as fresh output and produced a "boot loop" that
+	 * did not exist, plus a phantom count of NSH parse errors.  Removing it also
+	 * returns its 2 x 16 KB of ring buffers to the heap.
 	 *
-	 * This runs in the init task (nsh_main -> nsh_initialize -> boardctl), and
-	 * boardctl(BOARDIOC_INIT) happens before nsh_consolemain() reaches
-	 * nsh_initscript(), so the descriptors are in place before rcS runs and
-	 * propagate to everything rcS starts (CONFIG_FDCLONE_STDIO gives child
-	 * tasks copies).  Placing this ahead of the module starts below means they
-	 * inherit it too.
+	 * /dev/trace is a lock-free memcpy into DDR that Linux reads out-of-band
+	 * under /sys/kernel/debug/remoteproc, so it cannot wedge, cannot block a
+	 * writer, and does not need anything on the Linux side to be draining it.
 	 *
-	 * fd 0 is left alone on purpose: NSH's session loop reads stdin, and a
-	 * descriptor that returns EOF makes it exit and respawn in a loop.  The
-	 * dead UART0 console blocks instead, which is the behaviour NSH has always
-	 * had on this board.
+	 * As before, only fds 1 and 2 move; stdin stays on the dead UART0 console
+	 * so NSH's session loop still blocks on a descriptor that never produces
+	 * input.  And as before this must happen here, in board_app_initialize(),
+	 * because boardctl(BOARDIOC_INIT) runs before nsh_consolemain() reaches
+	 * nsh_initscript() -- so rcS and everything it starts inherit these.
 	 */
 
-	/* O_NONBLOCK is essential, not a refinement.  uart_write() derives
-	 * "oktoblock" from the absence of O_NONBLOCK, so a blocking descriptor
-	 * lets uart_putxmitchar() sleep on dev->xmitsem *while holding
-	 * dev->xmit.sem* once the ring is full.  With nothing on the Linux side
-	 * draining this endpoint, the first task to fill 4096 bytes of log then
-	 * blocks forever, and anything else that writes to stdout or polls the tty
-	 * piles up behind that semaphore -- measured as PX4 answering rpmsg pings
-	 * normally while failing every parameter request.  A diagnostic console
-	 * must never be able to stall the flight stack, so let writes fail with
-	 * -EAGAIN and drop the output instead.
-	 */
+	if (zynqr5_trace_register() == 0) {
+		int tfd = open("/dev/trace", O_WRONLY);
 
-	{
-		int lfd = open("/dev/ttyPX4LOG", O_WRONLY | O_NONBLOCK);
+		if (tfd >= 0) {
+			dup2(tfd, 1);
+			dup2(tfd, 2);
 
-		if (lfd >= 0) {
-			dup2(lfd, 1);
-			dup2(lfd, 2);
-
-			if (lfd > 2) {
-				close(lfd);
+			if (tfd > 2) {
+				close(tfd);
 			}
 
-			dprintf(1, "\n[boot] kria-kv260 R5F: PX4 stdout/stderr on rpmsg-ttyPX4LOG\n");
+			dprintf(1, "\n[boot] kria-kv260 R5F: stdout/stderr -> RSC_TRACE\n");
 		}
 	}
+
 #endif
 
 #ifdef CONFIG_MODULES_MAVLINK
