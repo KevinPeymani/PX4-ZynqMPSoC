@@ -390,7 +390,20 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	 * console text into it would corrupt every frame.
 	 */
 
-	uart_rpmsg_init("a53", "PX4LOG", 4096, false);
+	/* 16 KB, not the 4 KB used for MAVLink.  Nothing on the Linux side can
+	 * attach to this endpoint until the R5F has announced it, which is well
+	 * after board_app_initialize() -- so the entire early boot log has to
+	 * survive in the ring until a reader shows up.  With 4 KB and
+	 * O_NONBLOCK (which drops rather than blocks, deliberately -- see
+	 * below) the whole of rcS scrolled out of the ring before anything read
+	 * it, and module start failures were invisible even with the console
+	 * working.  PX4's boot log is a few KB.
+	 *
+	 * The proper fix is an RSC_TRACE resource-table entry, which Linux exposes
+	 * as a trace0 file under /sys/kernel/debug/remoteproc and which needs no
+	 * peer to drain it; struct rptun_rsc_s already carries the field.  This is
+	 * the cheap stand-in. */
+	uart_rpmsg_init("a53", "PX4LOG", 16384, false);
 
 	/* Point stdout and stderr -- and only those -- at that tty.
 	 *

@@ -116,6 +116,37 @@ CONFIG_DEBUG_FEATURES=y
 CONFIG_DEBUG_SYMBOLS=y
 CONFIG_EXPERIMENTAL=y
 
+# Memory diagnostics: DO NOT enable these on this board yet -- they hang it.
+#
+# Module startup here is non-deterministic (exported parameter count varies
+# 317..682 across boots of an identical image), which points at a resource
+# failure, so CONFIG_DEBUG_MM / DEBUG_MM_ERROR / MM_FILL_ALLOCATIONS /
+# STACK_COLORATION / DEBUG_ASSERTIONS were the obvious next step.  Enabling
+# them produces a hard hang about one second into boot: the system tick itself
+# stops (tick counter frozen at ~1067, uptime frozen at 3 s, 0/3 rpmsg pings),
+# i.e. a spin with interrupts disabled rather than a crash.
+#
+# Bisected on hardware: it is not DEBUG_ASSERTIONS and not
+# MM_FILL_ALLOCATIONS -- dropping both still hangs -- and it is not the 16 KB
+# PX4LOG ring added at the same time, which boots fine on its own.  The
+# mechanism is almost certainly that the heap debug hooks log through merr()
+# -> syslog -> the rpmsg syslog channel, whose write path allocates, while the
+# allocator's own lock is held with interrupts off.  A recursive allocation
+# under mm_lock() deadlocks exactly like this.
+#
+# The deeper problem is that this board has no log sink that works without
+# allocating memory and without the scheduler running.  The same limitation
+# means an assertion cannot report itself here: arm_assert() writes its banner
+# and register dump through syslog, which needs the rptun thread to run.  That
+# is why enabling DEBUG_ASSERTIONS earlier produced a silent hang rather than a
+# diagnosable one.
+#
+# Prerequisite before retrying any of this: an RSC_TRACE resource-table entry
+# (a plain DDR ring written with memcpy, no allocation, no scheduling, read
+# out-of-band by Linux under /sys/kernel/debug/remoteproc).  struct
+# rptun_rsc_s already carries the field and zynqr5_rsc.c deliberately zeroes
+# it.
+
 # Flat binary output for remoteproc ELF packaging
 CONFIG_RAW_BINARY=y
 
