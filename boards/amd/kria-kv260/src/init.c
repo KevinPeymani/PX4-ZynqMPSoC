@@ -437,17 +437,42 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 #ifdef CONFIG_MODULES_MAVLINK
 	{
-		/* See the mavlink_main() declaration above for why this is
-		 * started here instead of relying on rc.serial's NSH command
-		 * line. Minimal flags — no -b/-m/-r override, just the device
-		 * — to first confirm bytes flow at all before matching
-		 * rc.serial's full param-driven invocation. */
+		/* See the mavlink_main() declaration above for why this is started
+		 * here instead of relying on rc.serial's NSH command line.
+		 *
+		 * -b/-r are not cosmetic on this link.  Without them _baudrate
+		 * defaults to 57600 and mavlink derives _datarate = _baudrate / 20 =
+		 * 2880 B/s (mavlink_main.cpp), which is a sensible default for a real
+		 * radio and absurd for a lossless shared-memory transport -- it was
+		 * throttling the parameter download to roughly 115 PARAM_VALUEs per
+		 * second and starving QGroundControl's timeouts.  2 Mbaud is the same
+		 * magic number mavlink itself substitutes for USB, and gives
+		 * _datarate = 100000 B/s; -r states it outright so the rate does not
+		 * silently depend on the /20 formula.
+		 *
+		 * The termios speed itself is discarded -- uart_rpmsg implements no
+		 * ioctl, so the generic upper half just stores the flags -- but 2000000
+		 * must still be a case in mavlink_open_uart()'s baud switch, which it
+		 * is, or the open is rejected outright.
+		 *
+		 * Note what this does NOT fix: _is_usb_uart is set only by a
+		 * "/dev/ttyACM" device-name match, and it separately gates FTP,
+		 * forwarding, and the parameter manager's 20-per-cycle burst (it sends
+		 * 3 otherwise, mavlink_parameters.cpp).  Renaming this endpoint to earn
+		 * that would change its rpmsg service name and break the Linux bridge,
+		 * so it is left alone; 3 per cycle at the ~100 Hz receive loop is ~300
+		 * params/s, which is no longer the binding constraint once the datarate
+		 * is fixed. */
 		char arg0[] = "mavlink";
 		char arg1[] = "start";
 		char arg2[] = "-d";
 		char arg3[] = "/dev/ttyRPMSG0";
-		char *mavlink_argv[] = { arg0, arg1, arg2, arg3, NULL };
-		mavlink_main(4, mavlink_argv);
+		char arg4[] = "-b";
+		char arg5[] = "2000000";
+		char arg6[] = "-r";
+		char arg7[] = "100000";
+		char *mavlink_argv[] = { arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, NULL };
+		mavlink_main(8, mavlink_argv);
 	}
 #endif
 
