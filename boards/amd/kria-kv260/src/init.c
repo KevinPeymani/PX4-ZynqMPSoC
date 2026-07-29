@@ -436,6 +436,17 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 				close(tfd);
 			}
 
+			/* Unbuffered.  /dev/trace is a memcpy so this costs nothing, and
+			 * it removes two real diagnostic hazards: stdout is otherwise
+			 * fully buffered (CONFIG_STDIO_BUFFER_SIZE, no line buffering
+			 * since nothing calls setvbuf), so NSH's script echo lagged the
+			 * execution frontier by exactly one line -- which produced a wrong
+			 * conclusion about where rcS stops -- and stderr was never flushed
+			 * at all, silently swallowing NSH's error messages. */
+
+			setvbuf(stdout, NULL, _IONBF, 0);
+			setvbuf(stderr, NULL, _IONBF, 0);
+
 			dprintf(1, "\n[boot] kria-kv260 R5F: stdout/stderr -> RSC_TRACE\n");
 		}
 	}

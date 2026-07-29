@@ -30,6 +30,25 @@ CONFIG_BUILTIN=y
 CONFIG_NSH_LIBRARY=y
 CONFIG_NSH_BUILTIN_APPS=y
 CONFIG_NSH_NESTDEPTH=8
+
+# PX4's rcS needs more than NuttX's defaults for both of these, and every one
+# of the other 124 PX4 NuttX boards sets exactly these values.  Leaving them at
+# the defaults (80 / 7) is not cosmetic -- it corrupts commands:
+#
+#   LINELEN=80: rc.serial's two `set MAV_ARGS "..."` lines are 88 and 99 chars.
+#   fgets() cut them at 79, losing the closing quote, so MAV_ARGS was never set
+#   and `mavlink start ${MAV_ARGS} -x` degenerated to `mavlink start -x`.  With
+#   no -d, mavlink falls back to DEFAULT_DEVICE_NAME == "/dev/ttyS1"
+#   (mavlink_main.h) -- which on this board is UART1, *Linux's own console*.  A
+#   second mavlink instance then streamed telemetry into it and made Linux
+#   unusable.  This stayed latent only for as long as rcS never got far enough
+#   to source rc.serial.
+#
+#   MAXARGUMENTS=7: six rcS lines pass 9-10 tokens.  Overflow prints
+#   "too many arguments" and then runs the *truncated* command anyway
+#   (nsh_parse.c), including the line that reports a bad SYS_AUTOSTART.
+CONFIG_NSH_LINELEN=128
+CONFIG_NSH_MAXARGUMENTS=15
 CONFIG_NSH_ARCHINIT=y
 CONFIG_SYSTEM_NSH=y
 
@@ -237,10 +256,18 @@ CONFIG_SERIAL_TERMIOS=y
 # replaying the tty's transmit ring.
 CONFIG_ZYNQR5_UART0=y
 CONFIG_ZYNQR5_UART0_CONSOLE=y
-CONFIG_ZYNQR5_UART1=y
+# UART1 is Linux's console (ttyPS1) and NuttX must never be able to reach it.
+# Not registering it at all is the only robust guarantee: while /dev/ttyS1
+# existed, any PX4 module that fell back to DEFAULT_DEVICE_NAME could open it
+# and flood Linux's console -- which is exactly what happened once rcS got far
+# enough to run rc.serial with a truncated MAV_ARGS.  With this unset,
+# arm_serialinit() never creates /dev/ttyS1, so that fallback fails cleanly
+# instead of taking the A53's console down with it.
+#
+# Nothing on this board needs it: UART0 remains the (electrically dead)
+# /dev/console, and CONFIG_SYSLOG_DEVPATH's "/dev/ttyS1" is inert because
+# CONFIG_SYSLOG_CHAR is not set.
+# CONFIG_ZYNQR5_UART1 is not set
 CONFIG_UART0_BAUD=115200
 CONFIG_UART0_RXBUFSIZE=256
 CONFIG_UART0_TXBUFSIZE=512
-CONFIG_UART1_BAUD=115200
-CONFIG_UART1_RXBUFSIZE=256
-CONFIG_UART1_TXBUFSIZE=512
