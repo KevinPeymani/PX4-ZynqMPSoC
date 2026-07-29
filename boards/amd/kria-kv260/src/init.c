@@ -28,6 +28,12 @@
 #include <drivers/drv_board_led.h>
 #include <px4_platform_common/init.h>
 
+/* RSC_TRACE log ring, defined alongside the resource table in
+ * arch/arm/src/zynqr5/zynqr5_rsc.c.  Registered as a SYSLOG channel from
+ * zynqr5_board_initialize() below, before nx_start(), so early-boot and
+ * assertion output is captured. */
+void zynqr5_trace_init(void);
+
 /* Linker-exported symbol — arm_head.S .rodata word = _ebss +
  * CONFIG_IDLETHREAD_STACKSIZE */
 extern uintptr_t g_idle_topstack;
@@ -130,7 +136,10 @@ extern int mavlink_main(int argc, char *argv[]);
 void up_allocate_heap(void **heap_start, size_t *heap_size)
 {
 	uintptr_t start = g_idle_topstack; /* _ebss + CONFIG_IDLETHREAD_STACKSIZE */
-	uintptr_t end = 0x1EEFFE00u;       /* debug scratch area starts here */
+	/* The RSC_TRACE ring occupies [0x1EEFDE00, 0x1EEFFE00) and the debug
+	 * scratchpad [0x1EEFFE00, 0x1EEFFFFF]; the heap must stop below both.
+	 * TRACE_DA in arch/arm/src/zynqr5/zynqr5_rsc.c has to agree with this. */
+	uintptr_t end = 0x1EEFDE00u;
 
 	uintptr_t size = (end > start) ? (end - start) : 0;
 
@@ -200,6 +209,11 @@ void arm_addregion(void)
 
 __EXPORT void zynqr5_board_initialize(void)
 {
+	/* Bring the trace ring up first: it is the only log sink that works
+	 * without the allocator or the scheduler, so anything that goes wrong
+	 * after this point has somewhere to be reported. */
+	zynqr5_trace_init();
+
 	*((volatile uint32_t *)0x1EEFFFB8u) = 0xB00710A1u;  /* reached board init */
 
 

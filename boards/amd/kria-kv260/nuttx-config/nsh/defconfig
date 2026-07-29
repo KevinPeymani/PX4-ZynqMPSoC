@@ -116,36 +116,28 @@ CONFIG_DEBUG_FEATURES=y
 CONFIG_DEBUG_SYMBOLS=y
 CONFIG_EXPERIMENTAL=y
 
-# Memory diagnostics: DO NOT enable these on this board yet -- they hang it.
+# Memory diagnostics.  Module startup here is non-deterministic (exported
+# parameter count varies 317..682 across boots of an identical image), which
+# points at a resource failure rather than a configuration gap.
 #
-# Module startup here is non-deterministic (exported parameter count varies
-# 317..682 across boots of an identical image), which points at a resource
-# failure, so CONFIG_DEBUG_MM / DEBUG_MM_ERROR / MM_FILL_ALLOCATIONS /
-# STACK_COLORATION / DEBUG_ASSERTIONS were the obvious next step.  Enabling
-# them produces a hard hang about one second into boot: the system tick itself
-# stops (tick counter frozen at ~1067, uptime frozen at 3 s, 0/3 rpmsg pings),
-# i.e. a spin with interrupts disabled rather than a crash.
+# These previously hard-hung the board about a second into boot -- the system
+# tick itself stopped, i.e. a spin with interrupts disabled.  Cause: the heap
+# debug hooks log through merr() -> syslog, syslog fans out to every
+# registered channel, and one of those channels (rpmsg syslog) allocates --
+# so a recursive allocation happened under mm_lock() with interrupts off.
 #
-# Bisected on hardware: it is not DEBUG_ASSERTIONS and not
-# MM_FILL_ALLOCATIONS -- dropping both still hangs -- and it is not the 16 KB
-# PX4LOG ring added at the same time, which boots fine on its own.  The
-# mechanism is almost certainly that the heap debug hooks log through merr()
-# -> syslog -> the rpmsg syslog channel, whose write path allocates, while the
-# allocator's own lock is held with interrupts off.  A recursive allocation
-# under mm_lock() deadlocks exactly like this.
-#
-# The deeper problem is that this board has no log sink that works without
-# allocating memory and without the scheduler running.  The same limitation
-# means an assertion cannot report itself here: arm_assert() writes its banner
-# and register dump through syslog, which needs the rptun thread to run.  That
-# is why enabling DEBUG_ASSERTIONS earlier produced a silent hang rather than a
-# diagnosable one.
-#
-# Prerequisite before retrying any of this: an RSC_TRACE resource-table entry
-# (a plain DDR ring written with memcpy, no allocation, no scheduling, read
-# out-of-band by Linux under /sys/kernel/debug/remoteproc).  struct
-# rptun_rsc_s already carries the field and zynqr5_rsc.c deliberately zeroes
-# it.
+# They are enabled now because the RSC_TRACE ring gives syslog a sink that
+# neither allocates nor needs the scheduler, and CONFIG_SYSLOG_RPMSG (the
+# allocating one) has been turned off above.  See TRACE_DA in
+# arch/arm/src/zynqr5/zynqr5_rsc.c.
+# Left off by default: DEBUG_MM found no heap errors and STACK_COLORATION
+# showed no task above 63% of its stack, so neither is earning its cost now.
+# Turn them back on to get the task/stack table and heap diagnostics -- they
+# are safe to enable since the RSC_TRACE sink landed (they used to hard-hang
+# the board, see the SYSLOG note above).
+# CONFIG_DEBUG_MM is not set
+# CONFIG_DEBUG_MM_ERROR is not set
+# CONFIG_STACK_COLORATION is not set
 
 # Flat binary output for remoteproc ELF packaging
 CONFIG_RAW_BINARY=y
@@ -197,10 +189,20 @@ CONFIG_RPMSG_UART=y
 # (Linux) side reading via the auto-created rpmsg_char device, not a
 # local NuttX-side chardev, so just disable it instead of picking a new
 # unclaimed devpath.
-CONFIG_SYSLOG_RPMSG=y
-CONFIG_SYSLOG_RPMSG_SERVER_NAME="a53"
+# SYSLOG over rpmsg is DISABLED in favour of the RSC_TRACE ring (see
+# TRACE_DA in arch/arm/src/zynqr5/zynqr5_rsc.c).  Two reasons:
+#
+#  - its write path allocates and needs the rptun thread scheduled, so it
+#    cannot carry the output that matters most: heap debug (which fires from
+#    inside the allocator's lock with interrupts off) or an assertion register
+#    dump.  Leaving it registered would keep CONFIG_DEBUG_MM deadlocking even
+#    with a safe sink present, because syslog fans out to every channel.
+#  - it never had a Linux consumer.  The kernel has no rpmsg-syslog driver; a
+#    patch was posted upstream in 2019 and never merged, so the endpoint was
+#    only reachable by raw rpmsg_char from userspace, and it delivered 0 bytes
+#    across a full boot every time it was measured.
+# CONFIG_SYSLOG_RPMSG is not set
 CONFIG_SYSLOG_MAX_CHANNELS=2
-# CONFIG_SYSLOG_RPMSG_CHARDEV is not set
 
 # Needed by the PX4 mavlink module's internal pipe() usage. Without it,
 # libc's pipe() (libs/libc/unistd/lib_pipe.c) has an unresolved reference
