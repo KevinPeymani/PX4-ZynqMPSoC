@@ -137,6 +137,23 @@ CONFIG_BOARD_INITTHREAD_STACKSIZE=65536
 CONFIG_INIT_STACKSIZE=16384
 CONFIG_SYSTEM_NSH_STACKSIZE=8192
 
+# Priority of the init task, i.e. nsh_main, i.e. the task that executes rcS.
+#
+# The NuttX default is 100, which assumes the startup script is the most
+# important thing running.  It is not on this board: simulator_sih runs at 180
+# on a single Cortex-R5 core, so nsh_main at 100 cannot resume between the
+# commands of its own script.  Raising the *builtins'* priority alone (see
+# PRIORITY_DEFAULT in cmake/px4_add_module.cmake) was measured NOT to be enough
+# precisely because of this: the spawned command completes, but the shell that
+# has to read the next line never gets scheduled again.
+#
+# 185 puts nsh_main above sih (180) and just below the builtins it spawns (190),
+# so a foreground command still runs to completion ahead of the shell that is
+# waitpid()-ing it, rather than round-robining against it across
+# CONFIG_RR_INTERVAL (200 ms) slices.  Both stay below the rpmsg transport
+# threads (mavlink RX 203 / TX 204, rptun 224).
+CONFIG_INIT_PRIORITY=185
+
 # Scheduler
 CONFIG_RR_INTERVAL=200
 
