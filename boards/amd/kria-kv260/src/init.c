@@ -51,9 +51,25 @@ extern uintptr_t g_idle_topstack;
 #include <nuttx/syslog/syslog_rpmsg.h>
 #endif
 
-/* simulator_sih's builtin entry point (see
- * src/modules/simulation/simulator_sih/sih.cpp). Called directly from
- * board_app_initialize() below instead of relying on rc.board_defaults/rcS.
+/* NOTE (2026-07-30): simulator_sih is deliberately NO LONGER started from
+ * board_app_initialize().  rcS starts it itself, from the SYS_HITL == 2 branch
+ * that this board's airframe (1100_rc_quad_x_sih.hil) selects -- see
+ * ROMFS/px4fmu_common/init.d/rcS, "start the simulator in hardware if needed".
+ * Starting it here as well was redundant, and it inverted PX4's intended
+ * ordering: sih came up at priority 180 before rcS had run a single line, so
+ * every parameter command rcS spawns -- all of which run at priority 100 and
+ * are waitpid()-ed -- competed with a 200 Hz simulation loop for the single R5
+ * core for the whole of boot.  The visible symptom was rcS stalling partway
+ * through (just after the px4io block) and never reaching commander.  The
+ * duplicate start was also self-evident in the boot log as
+ * "ERROR [module] Task already running" at exactly rcS's own sih line.
+ *
+ * The original justification for calling it from here -- that it was unclear
+ * whether rcS ran at all on a board with no working console -- no longer holds:
+ * the RSC_TRACE ring shows rcS executing well past the HITL branch.
+ *
+ * The historical note below is kept because it explains why sih is pinned to
+ * priority 180 on this board, which is still true and still load-bearing.
  *
  * SCHEDULING BLOCKER (2026-07-21, RESOLVED 2026-07-22): nothing at task
  * level — not nsh_main, not board_app_initialize, not this call — used to
@@ -86,17 +102,12 @@ extern uintptr_t g_idle_topstack;
  * always-spinning loop, a deliberate latency/correctness tradeoff, see
  * ZYNQR5_RPTUN_POLL_USEC in rptun.c), and sih's debug breadcrumb (see
  * sih.cpp) advances at ~200 Hz as expected. */
-#ifdef CONFIG_MODULES_SIMULATION_SIMULATOR_SIH
-extern int simulator_sih_main(int argc, char *argv[]);
-#endif
 
-/* Started directly for the same reason as simulator_sih_main() below:
- * this board's rc.serial (auto-generated from CONFIG_BOARD_SERIAL_TEL1,
- * see ROMFS/px4fmu_common/init.d/rcS) issues a plain "mavlink start ..."
- * NSH command line, which depends on PX4's module-name-to-entrypoint
- * dispatch table actually being wired up for NSH text commands — a path
- * nothing else on this board has ever exercised (every other module,
- * including SIH, is started via a direct C call like this one). A debug
+/* Started directly because this board's rc.serial (auto-generated from
+ * CONFIG_BOARD_SERIAL_TEL1, see ROMFS/px4fmu_common/init.d/rcS) issues a plain
+ * "mavlink start ..." NSH command line, which depends on PX4's
+ * module-name-to-entrypoint dispatch table actually being wired up for NSH text
+ * commands — a path nothing else on this board has ever exercised. A debug
  * breadcrumb at the top of mavlink_main() never fired when relying on
  * rc.serial alone, confirming that dispatch path — not anything
  * mavlink-specific — was the actual gap. */
@@ -494,16 +505,8 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	}
 #endif
 
-#ifdef CONFIG_MODULES_SIMULATION_SIMULATOR_SIH
-	{
-		/* See the simulator_sih_main() declaration above for why this is
-		 * started here instead of from rc.board_defaults. */
-		char arg0[] = "simulator_sih";
-		char arg1[] = "start";
-		char *sih_argv[] = { arg0, arg1, NULL };
-		simulator_sih_main(2, sih_argv);
-	}
-#endif
+	/* simulator_sih is intentionally NOT started here — rcS starts it from its
+	 * SYS_HITL == 2 branch.  See the note near the top of this file. */
 
 	return OK;
 }
