@@ -59,6 +59,28 @@
 #include <asm/socket.h>
 #endif
 
+/* Priority of the nsh task backing the MAVLink shell.
+ *
+ * SCHED_PRIORITY_DEFAULT (100) is right on a board whose real console is a
+ * physical UART: the shell is a convenience and must never outrank flight
+ * code.  On the Kria KV260 R5F it is the *only* console -- UART0 has no MIO
+ * pins assigned and UART1 belongs to Linux -- so a shell at 100 is unusable
+ * for exactly the situations it is needed in.  Observed directly: with the
+ * simulator at 180 the shell spawned ("Starting mavlink shell" reached the
+ * trace ring) and then never emitted a single byte, because everything from
+ * simulator_sih upwards was ahead of it.
+ *
+ * Place it under the two mavlink threads (sender 204, receiver 203) so the
+ * shell can never starve the transport carrying its own output, and above
+ * simulator_sih (180) so it stays answerable while the simulation runs.
+ *
+ * Scoped to this board; every other target keeps SCHED_PRIORITY_DEFAULT. */
+#if defined(CONFIG_ZYNQR5_RPTUN)
+#  define MAVLINK_SHELL_TASK_PRIORITY (CONFIG_RPTUN_PRIORITY - 22)
+#else
+#  define MAVLINK_SHELL_TASK_PRIORITY SCHED_PRIORITY_DEFAULT
+#endif
+
 MavlinkShell::~MavlinkShell()
 {
 	//closing the pipes will stop the thread as well
@@ -143,7 +165,7 @@ int MavlinkShell::start()
 	if (ret == 0) {
 		_task = px4_task_spawn_cmd("mavlink_shell",
 					   SCHED_DEFAULT,
-					   SCHED_PRIORITY_DEFAULT,
+					   MAVLINK_SHELL_TASK_PRIORITY,
 					   2048,
 					   &MavlinkShell::shell_start_thread,
 #ifdef __PX4_POSIX

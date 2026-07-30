@@ -66,7 +66,15 @@
 
 /* DMA **********************************************************************/
 
-/* No DMA allocator on R5F yet; board_dma_alloc_init() returns OK as a stub */
-#define BOARD_DMA_ALLOC_POOL_SIZE  0
+/* There is no DMA pool on the R5F, so BOARD_DMA_ALLOC_POOL_SIZE is deliberately
+ * left undefined rather than defined as 0.  Every user of it is guarded by
+ * "#if defined(BOARD_DMA_ALLOC_POOL_SIZE)", so defining it to zero advertised a
+ * pool that has no implementation -- board_dma_alloc.c compiles its body only
+ * under CONFIG_GRAN, which this board does not set -- and turned the first
+ * caller into a link error instead of a no-op.  "top" was that first caller
+ * (print_load.cpp calls board_get_dma_usage under exactly this guard).
+ * Undefined selects the stubs in px4_platform/board_dma_alloc.h, which is what
+ * "no DMA allocator" is actually spelled as.
+ */
 
 #include <px4_platform_common/board_common.h>

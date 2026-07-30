@@ -52,6 +52,20 @@ CONFIG_NSH_MAXARGUMENTS=15
 CONFIG_NSH_ARCHINIT=y
 CONFIG_SYSTEM_NSH=y
 
+# Line editor: readline(), not cle().
+#
+# nshlib/Kconfig defaults this choice to NSH_CLE when !DEFAULT_SMALL, so the
+# EMACS-like editor was in use here by omission rather than by choice -- and its
+# own help text says to pick it "only if you work with a terminal that supports
+# [cursor position reporting]".  The only console on this board is the MAVLink
+# shell over rpmsg, which is a pipe: cle() emits ESC[6n and waits for a cursor
+# report that never comes, fails with EINVAL, and nsh_session() then loops
+# reprinting the prompt forever without ever reading a command
+# ("nsh: nsh_session: cle failed: 22").  readline() is line-oriented, probes
+# nothing and redraws nothing, so it works over a pipe.  12 other PX4 boards
+# make the same choice; only this one had been leaving it to the default.
+CONFIG_NSH_READLINE=y
+
 # Filesystem support needed by PX4 (ROMFS for init scripts, procfs for diagnostics)
 CONFIG_FS_BINFS=y
 CONFIG_FS_PROCFS=y
@@ -75,7 +89,26 @@ CONFIG_FDCLONE_STDIO=y
 CONFIG_POSIX_TIMERS=y
 CONFIG_PREALLOC_TIMERS=32
 CONFIG_PRIORITY_INHERITANCE=y
+
+# Per-task CPU accounting, feeding PX4's "top".  Without it there is no way to
+# tell a task that is blocked from one that is spinning, and this board has no
+# console other than the MAVLink shell, so guessing was the only alternative.
+#
+# Use PX4's mechanism (SCHED_INSTRUMENTATION + platforms/nuttx/src/px4/common/
+# cpuload.cpp), as the other 124 NuttX boards do, and NOT NuttX's own
+# SCHED_CPULOAD: that one makes <nuttx/clock.h> declare a "struct cpuload_s",
+# which collides with the uORB topic of the same name and stops the build in
+# msg/topics_sources/cpuload.cpp.  The two are alternatives, not layers.
+CONFIG_SCHED_INSTRUMENTATION=y
+CONFIG_SCHED_INSTRUMENTATION_EXTERNAL=y
+CONFIG_SCHED_INSTRUMENTATION_SWITCH=y
 CONFIG_SCHED_HPWORK=y
+
+# Default signal actions (SIGSTOP/SIGTSTP/SIGCONT, SIGKILL/SIGTERM).  This
+# board never set it while the other 197 PX4 NuttX boards do; the gap only
+# surfaced now because SIG_DEFAULT is what makes <nuttx/sched.h> declare
+# TSTATE_TASK_STOPPED, which print_load.cpp switches on unconditionally.
+CONFIG_SIG_DEFAULT=y
 CONFIG_SCHED_LPWORK=y
 CONFIG_SCHED_WAITPID=y
 CONFIG_SCHED_WORKQUEUE=y
@@ -149,14 +182,17 @@ CONFIG_EXPERIMENTAL=y
 # neither allocates nor needs the scheduler, and CONFIG_SYSLOG_RPMSG (the
 # allocating one) has been turned off above.  See TRACE_DA in
 # arch/arm/src/zynqr5/zynqr5_rsc.c.
-# Left off by default: DEBUG_MM found no heap errors and STACK_COLORATION
-# showed no task above 63% of its stack, so neither is earning its cost now.
-# Turn them back on to get the task/stack table and heap diagnostics -- they
-# are safe to enable since the RSC_TRACE sink landed (they used to hard-hang
-# the board, see the SYSLOG note above).
+# DEBUG_MM stays off: it found no heap errors, and its hooks log through a path
+# that allocates while the heap lock is held with interrupts off, which used to
+# hard-hang the board (see the SYSLOG note above).
 # CONFIG_DEBUG_MM is not set
 # CONFIG_DEBUG_MM_ERROR is not set
-# CONFIG_STACK_COLORATION is not set
+
+# STACK_COLORATION is on because print_load.cpp hard-#errors without it, so
+# "top" cannot be built at all otherwise.  197 of PX4's NuttX boards set it.
+# It also restores the stack high-water column that was previously measured
+# once (nothing above 63%) and then lost when this was turned back off.
+CONFIG_STACK_COLORATION=y
 
 # Flat binary output for remoteproc ELF packaging
 CONFIG_RAW_BINARY=y
