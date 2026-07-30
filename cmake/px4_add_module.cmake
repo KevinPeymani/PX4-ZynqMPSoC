@@ -187,7 +187,29 @@ function(px4_add_module)
 	# set defaults if not set
 	set(MAIN_DEFAULT MAIN-NOTFOUND)
 	set(STACK_MAIN_DEFAULT 2048)
-	set(PRIORITY_DEFAULT SCHED_PRIORITY_DEFAULT)
+
+	# Default priority of a module's builtin entry point -- the priority NSH
+	# spawns "<module> start" at.  Note this is NOT inherited from the shell:
+	# apps/builtin/exec_builtin.c sets param.sched_priority = builtin->priority
+	# from this table, so raising the shell's own priority does not help.
+	#
+	# SCHED_PRIORITY_DEFAULT (100) is correct when the startup script is the
+	# most important thing running.  On the Kria KV260 R5F it is not: that board
+	# runs simulator_sih at 180 on a single Cortex-R5 core, and rcS spawns most
+	# commands in the foreground and waitpid()s them, so every "param compare",
+	# "rc_update start", "commander start" sits below the simulation loop and
+	# stalls the boot.  Lift the default above sih, and keep it below the rpmsg
+	# transport threads (mavlink RX 203 / TX 204, rptun 224) so a startup
+	# command can never starve the link carrying its own output.
+	#
+	# Only affects modules that do not set PRIORITY explicitly; ekf2 (237) and
+	# top are unchanged.  Scoped to this board so no other target's scheduling
+	# behaviour moves.
+	if(PX4_BOARD STREQUAL "amd_kria-kv260")
+		set(PRIORITY_DEFAULT 190)
+	else()
+		set(PRIORITY_DEFAULT SCHED_PRIORITY_DEFAULT)
+	endif()
 
 	foreach(property MAIN STACK_MAIN PRIORITY)
 		if(NOT ${property})
