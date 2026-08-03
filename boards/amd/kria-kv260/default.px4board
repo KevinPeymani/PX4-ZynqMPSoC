@@ -12,6 +12,19 @@ CONFIG_BOARD_ARCHITECTURE="cortex-r5"
 # The three files total ~68 KB against a 22 MB DDR-resident image, so there is
 # nothing constrained about this target's flash.
 
+# There is no SD card reachable from the R5.  The KV260 does have one -- Linux's
+# rootfs lives on mmcblk1p2 -- but it is on the A53 side of the AMP split and the
+# R5 cannot see it, so sdcardCheck's statfs(PX4_STORAGEDIR) can never succeed and
+# every preflight report carries a permanent "Preflight Fail: Missing FMU SD
+# Card".  That check is compile-time gated only, with no runtime parameter, and
+# it reports with NavModes::None so it never actually blocked arming -- it was
+# pure noise crowding out the real failures in QGroundControl's arming report.
+#
+# Setting this changes nothing else: it does not create storage, so parameters,
+# missions and calibration remain volatile (SYS_DM_BACKEND=1 keeps dataman in
+# RAM, and no MTD/flash param backend is wired), and MODULES_LOGGER is not built.
+CONFIG_BOARD_NO_SDCARD=y
+
 # Serial port assignments
 # UART0 (0xFF000000) is NSH console — electrically dead on this carrier
 # (no MIO pins assigned), so TEL1 is mapped to the rpmsg-uart transport
