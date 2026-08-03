@@ -103,18 +103,6 @@ extern uintptr_t g_idle_topstack;
  * ZYNQR5_RPTUN_POLL_USEC in rptun.c), and sih's debug breadcrumb (see
  * sih.cpp) advances at ~200 Hz as expected. */
 
-/* Started directly because this board's rc.serial (auto-generated from
- * CONFIG_BOARD_SERIAL_TEL1, see ROMFS/px4fmu_common/init.d/rcS) issues a plain
- * "mavlink start ..." NSH command line, which depends on PX4's
- * module-name-to-entrypoint dispatch table actually being wired up for NSH text
- * commands — a path nothing else on this board has ever exercised. A debug
- * breadcrumb at the top of mavlink_main() never fired when relying on
- * rc.serial alone, confirming that dispatch path — not anything
- * mavlink-specific — was the actual gap. */
-#ifdef CONFIG_MODULES_MAVLINK
-extern int mavlink_main(int argc, char *argv[]);
-#endif
-
 /****************************************************************************
  * Name: up_allocate_heap
  *
@@ -464,71 +452,25 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 #endif
 
-#ifdef CONFIG_MODULES_MAVLINK
-	{
-		/* See the mavlink_main() declaration above for why this is started
-		 * here instead of relying on rc.serial's NSH command line.
-		 *
-		 * -b/-r are not cosmetic on this link.  Without them _baudrate
-		 * defaults to 57600 and mavlink derives _datarate = _baudrate / 20 =
-		 * 2880 B/s (mavlink_main.cpp), which is a sensible default for a real
-		 * radio and absurd for a lossless shared-memory transport -- it was
-		 * throttling the parameter download to roughly 115 PARAM_VALUEs per
-		 * second and starving QGroundControl's timeouts.  2 Mbaud is the same
-		 * magic number mavlink itself substitutes for USB, and gives
-		 * _datarate = 100000 B/s; -r states it outright so the rate does not
-		 * silently depend on the /20 formula.
-		 *
-		 * The termios speed itself is discarded -- uart_rpmsg implements no
-		 * ioctl, so the generic upper half just stores the flags -- but 2000000
-		 * must still be a case in mavlink_open_uart()'s baud switch, which it
-		 * is, or the open is rejected outright.
-		 *
-		 * Note what this does NOT fix: _is_usb_uart is set only by a
-		 * "/dev/ttyACM" device-name match, and it separately gates FTP,
-		 * forwarding, and the parameter manager's 20-per-cycle burst (it sends
-		 * 3 otherwise, mavlink_parameters.cpp).  Renaming this endpoint to earn
-		 * that would change its rpmsg service name and break the Linux bridge,
-		 * so it is left alone; 3 per cycle at the ~100 Hz receive loop is ~300
-		 * params/s, which is no longer the binding constraint once the datarate
-		 * is fixed. */
-		char arg0[] = "mavlink";
-		char arg1[] = "start";
-		char arg2[] = "-d";
-		char arg3[] = "/dev/ttyRPMSG0";
-		char arg4[] = "-b";
-		char arg5[] = "2000000";
-		char arg6[] = "-r";
-		char arg7[] = "100000";
-
-		/* -m config, not the default "normal" mode.
-		 *
-		 * The two modes are just stream-rate profiles
-		 * (configure_streams_to_default() in mavlink_main.cpp), and "normal" is
-		 * tuned for a real radio: ALTITUDE 1 Hz, GLOBAL_POSITION_INT 5 Hz,
-		 * VFR_HUD ~4 Hz.  On a GCS that shows up as an altitude readout that
-		 * updates about once a second, which is what was reported here.
-		 *
-		 * "config" is the profile PX4 ships for high-bandwidth links such as USB
-		 * -- ALTITUDE 10 Hz, GLOBAL_POSITION_INT 10 Hz, VFR_HUD 20 Hz, ATTITUDE
-		 * 50 Hz, LOCAL_POSITION_NED 30 Hz -- and this link qualifies: it is
-		 * shared memory, and "mavlink status" measured 13.3 kB/s against the
-		 * 100 kB/s budget with txerr 0.0 B/s and tx rate mult 1.000, i.e. no
-		 * throttling and ample headroom.
-		 *
-		 * Worth knowing before blaming bandwidth for a slow stream on this
-		 * board: the rates above are what mavlink was *asked* for, and
-		 * update_rate_mult() only scales them down when the requested total
-		 * exceeds _datarate or when tx errors appear.  Neither was happening --
-		 * the low rate was simply the "normal" profile doing what it says. */
-		char arg8[] = "-m";
-		char arg9[] = "config";
-		char *mavlink_argv[] = { arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7,
-					 arg8, arg9, NULL
-				       };
-		mavlink_main(10, mavlink_argv);
-	}
-#endif
+	/* mavlink is intentionally NOT started here either -- rc.serial starts it,
+	 * driven by parameters set in init/rc.board_defaults: MAV_0_CONFIG 101
+	 * (TELEM 1, which CONFIG_BOARD_SERIAL_TEL1 maps to /dev/ttyRPMSG0),
+	 * SER_TEL1_BAUD 2000000, MAV_0_MODE 5 (config) and MAV_0_RATE 100000.
+	 *
+	 * It used to be started directly from here because rc.serial issues a plain
+	 * "mavlink start ..." NSH command line, and PX4's module-name-to-entrypoint
+	 * dispatch for NSH text commands had never been exercised on this board --
+	 * a breadcrumb in mavlink_main() never fired when relying on rc.serial.
+	 * That is settled now: rcS runs to completion, rc.serial executes, and its
+	 * mavlink start reached the module and was correctly refused with
+	 * "/dev/ttyRPMSG0 already running" precisely because this call had got there
+	 * first.  Keeping both meant that error on every single boot.
+	 *
+	 * Doing it from rc.serial is also strictly better than hardcoding argv here:
+	 * the baud, mode and datarate become parameters, and mavlink now starts
+	 * after the Linux-side bridge has had a chance to attach rather than writing
+	 * to /dev/ttyRPMSG0 with no peer listening.
+	 */
 
 	/* simulator_sih is intentionally NOT started here — rcS starts it from its
 	 * SYS_HITL == 2 branch.  See the note near the top of this file. */

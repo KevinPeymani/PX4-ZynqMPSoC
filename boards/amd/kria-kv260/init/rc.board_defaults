@@ -31,6 +31,27 @@ param set-default COM_RC_IN_MODE 1
 # Recommended by PX4's SIH documentation for estimator performance.
 param set-default SENS_GPS0_DELAY 0
 
+# MAVLink on TELEM 1, which CONFIG_BOARD_SERIAL_TEL1 maps to /dev/ttyRPMSG0.
+# rc.serial starts the instance from these parameters; src/init.c no longer
+# starts it directly, so all three matter and their defaults are all wrong here.
+#
+# SER_TEL1_BAUD: the termios speed is discarded (uart_rpmsg implements no ioctl)
+# but it must still be a case in mavlink_open_uart()'s baud switch or the open is
+# rejected, and mavlink derives its default datarate as baud/20.  57600 gave
+# 2880 B/s, absurd for a lossless shared-memory transport -- it was throttling
+# the parameter download and starving QGroundControl's timeouts.
+param set-default SER_TEL1_BAUD 2000000
+
+# MAV_0_MODE 5 = "config": the stream-rate profile PX4 ships for high-bandwidth
+# links.  The default "normal" profile is radio-paced (ALTITUDE 1 Hz,
+# GLOBAL_POSITION_INT 5 Hz), which showed up as a GCS altitude readout updating
+# about once a second.  Config gives ALTITUDE 10 Hz, VFR_HUD 20 Hz, ATTITUDE
+# 50 Hz.  Measured cost: 31 kB/s of a 100 kB/s budget, txerr 0, rate mult 1.000.
+param set-default MAV_0_MODE 5
+
+# MAV_0_RATE in B/s.  The default is 1200, which would undo the above.
+param set-default MAV_0_RATE 100000
+
 # Airframe: SIH Quadcopter X (ROMFS/px4fmu_common/init.d/airframes/
 # 1100_rc_quad_x_sih.hil).  Without this, SYS_AUTOSTART is unset, rcS logs
 # "ERROR [init] No airframe file found for SYS_AUTOSTART value", leaves
