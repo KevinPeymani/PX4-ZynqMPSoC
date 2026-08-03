@@ -223,6 +223,30 @@ CONFIG_STACK_COLORATION=y
 CONFIG_RAW_BINARY=y
 
 # TTC timer (system tick)
+# Dedicated counter for PX4's HRT: TTC1 counter 1, i.e. the SAME TTC as the
+# system tick (counter 0) but a different counter within it.  Each counter has
+# its own CLK_CTRL, CNT_CTRL, INT_STATUS and INT_ENABLE, so the two do not
+# interfere; only the peripheral reference clock is shared.
+#
+# Sharing is deliberate.  TTC0 is Linux's (bound to ttc-pwm, exposing
+# /sys/class/pwm/pwmchip0), so it is out.  TTC2 and TTC3 have no Linux driver
+# bound and look free -- but TTC2 was tried first and its counter never
+# incremented: hrt_absolute_time() returned a constant, mavlink sent one burst
+# of 15 messages at t=0 and then went silent forever because no stream ever
+# became due again.  Their reference clocks are evidently left gated in CRL_APB,
+# and ungating them would mean read-modify-write programming of CRL_APB from the
+# R5 -- which this board has already been power-cycled over once.  TTC1's clock
+# is known-good because the system tick has been running on it for weeks.
+#
+# Prescaler 5 divides 100 MHz by 64 -> 1.5625 MHz, i.e. 0.64 us per count, and
+# microseconds convert exactly as count * 16 / 25.  An exact 1 MHz is impossible
+# because the TTC prescaler only divides by powers of two.
+CONFIG_ZYNQR5_TTC_HRT=y
+CONFIG_ZYNQR5_TTC_HRT_BASE=0xff120000
+CONFIG_ZYNQR5_TTC_HRT_COUNTER=1
+CONFIG_ZYNQR5_TTC_HRT_IRQ=72
+CONFIG_ZYNQR5_TTC_HRT_PRESCALE_LOG2=5
+
 CONFIG_ZYNQR5_TTC1=y
 CONFIG_ZYNQR5_TTC_COUNTER0=y
 CONFIG_ZYNQR5_TTC_FREQ=100000000
