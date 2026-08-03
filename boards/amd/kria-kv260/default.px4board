@@ -90,6 +90,19 @@ CONFIG_MODULES_LAND_DETECTOR=y
 # (manual_control), RTL_*/MIS_* (navigator), CA_* (control_allocator),
 # LNDMC_* (land_detector) and MPC_* (mc_pos_control) were all absent, and QGC
 # names whichever of those happen to be on its own required list.
+# Flight logging, streamed over MAVLink rather than written to a card.
+#
+# There is no storage the R5 can reach (see CONFIG_BOARD_NO_SDCARD above), which
+# is why this was left out until now -- but log_writer_mavlink means the logger
+# does not need a filesystem: it streams ULog over the existing link and QGC
+# saves it.  Streaming is GCS-initiated (VEHICLE_CMD_LOGGING_START), so it costs
+# no bandwidth until something asks for it.
+#
+# rc.logging drives this entirely from parameters: SDLOG_BACKEND selects the
+# backend and must be 2 (mavlink) on this board rather than its default of 3
+# (all), or the logger also tries the file backend and fails on every write.
+# See rc.board_defaults.
+CONFIG_MODULES_LOGGER=y
 CONFIG_MODULES_RC_UPDATE=y
 CONFIG_MODULES_MANUAL_CONTROL=y
 CONFIG_MODULES_MC_RATE_CONTROL=y

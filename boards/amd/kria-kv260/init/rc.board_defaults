@@ -50,6 +50,16 @@ param set-default SYS_AUTOSTART 1100
 # No SD card / filesystem on this board: dataman missions live in RAM.
 param set-default SYS_DM_BACKEND 1
 
+# Flight logs stream over MAVLink instead of going to a card.  SDLOG_BACKEND
+# defaults to 3 ("all"), which would have the logger open the file backend as
+# well and fail on every write, since there is no storage the R5 can reach.  2
+# selects the mavlink backend only; QGroundControl starts the stream on demand
+# with MAV_CMD_LOGGING_START, so it costs nothing until asked for.
+#
+# SDLOG_MODE is deliberately left at its default (0 = armed until disarm) so a
+# log covers exactly the interesting window rather than streaming continuously.
+param set-default SDLOG_BACKEND 2
+
 # simulator_sih is deliberately NOT started here.
 #
 # rcS starts it itself, later, from the SYS_HITL == 2 branch that the airframe
