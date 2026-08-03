@@ -500,8 +500,33 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 		char arg5[] = "2000000";
 		char arg6[] = "-r";
 		char arg7[] = "100000";
-		char *mavlink_argv[] = { arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, NULL };
-		mavlink_main(8, mavlink_argv);
+
+		/* -m config, not the default "normal" mode.
+		 *
+		 * The two modes are just stream-rate profiles
+		 * (configure_streams_to_default() in mavlink_main.cpp), and "normal" is
+		 * tuned for a real radio: ALTITUDE 1 Hz, GLOBAL_POSITION_INT 5 Hz,
+		 * VFR_HUD ~4 Hz.  On a GCS that shows up as an altitude readout that
+		 * updates about once a second, which is what was reported here.
+		 *
+		 * "config" is the profile PX4 ships for high-bandwidth links such as USB
+		 * -- ALTITUDE 10 Hz, GLOBAL_POSITION_INT 10 Hz, VFR_HUD 20 Hz, ATTITUDE
+		 * 50 Hz, LOCAL_POSITION_NED 30 Hz -- and this link qualifies: it is
+		 * shared memory, and "mavlink status" measured 13.3 kB/s against the
+		 * 100 kB/s budget with txerr 0.0 B/s and tx rate mult 1.000, i.e. no
+		 * throttling and ample headroom.
+		 *
+		 * Worth knowing before blaming bandwidth for a slow stream on this
+		 * board: the rates above are what mavlink was *asked* for, and
+		 * update_rate_mult() only scales them down when the requested total
+		 * exceeds _datarate or when tx errors appear.  Neither was happening --
+		 * the low rate was simply the "normal" profile doing what it says. */
+		char arg8[] = "-m";
+		char arg9[] = "config";
+		char *mavlink_argv[] = { arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7,
+					 arg8, arg9, NULL
+				       };
+		mavlink_main(10, mavlink_argv);
 	}
 #endif
 
