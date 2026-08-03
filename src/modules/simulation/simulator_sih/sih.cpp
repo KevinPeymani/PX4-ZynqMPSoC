@@ -53,22 +53,40 @@ using namespace math;
 using namespace matrix;
 using namespace time_literals;
 
-/* Board-specific compile-time override: on the AMD Kria KV260 R5F NuttX
- * port, CONFIG_ZYNQR5_RPTUN is the rptun IPC kthread that carries every
- * rpmsg/OpenAMP message between this core and Linux, and it (like NuttX's
- * own HPWORK convention) runs at CONFIG_RPTUN_PRIORITY (224) precisely
- * because NuttX's docs designate that tier as "the highest priority thread
- * in your system." Spawning sih at SCHED_PRIORITY_MAX (this module's
- * default, harmless on every other SIH-using target since none of them run
- * a same-priority-224 IPC kthread) outranks rptun/HPWORK outright on this
- * board and was observed to starve rptun's IPC wake path once sih actually
- * started running. Pin sih to 44 below rptun's priority instead — enough
- * headroom to guarantee it never contends with rptun/HPWORK, while still
- * sitting well above SCHED_PRIORITY_DEFAULT (100) so the simulation loop
- * isn't itself starved by ordinary app-level tasks. This is scoped to this
- * board only; every other target keeps the original SCHED_PRIORITY_MAX. */
+/* Board-specific compile-time override: on the AMD Kria KV260 R5F NuttX port
+ * the whole flight stack shares a single Cortex-R5 core, so where sih sits
+ * relative to its *consumers* matters more than where it sits in the abstract.
+ *
+ * SCHED_PRIORITY_MAX (this module's default) is wrong here for a reason
+ * specific to this board: CONFIG_RPTUN_PRIORITY (224) is the rptun IPC kthread
+ * that carries every rpmsg/OpenAMP message to Linux, and NuttX designates that
+ * tier as "the highest priority thread in your system". sih at MAX outranked it
+ * and starved the IPC wake path outright.
+ *
+ * The first correction pinned sih to CONFIG_RPTUN_PRIORITY - 44 (180) on the
+ * reasoning that this kept it clear of rptun while staying "well above
+ * SCHED_PRIORITY_DEFAULT so the simulation loop isn't starved by ordinary
+ * app-level tasks". That reasoning was wrong: on NuttX SCHED_PRIORITY_DEFAULT
+ * is 100, and PX4's flight stack lives *below* that -- commander 140, navigator
+ * 105, lpwork 100, dataman 90 -- so 180 put the simulator ahead of nearly
+ * everything it feeds. Measured consequence: dataman never answered the mission
+ * manager ("ERROR [dataman_client] timeout after 5000 ms!" on repeat, surfacing
+ * in QGroundControl as "Mission request list failed, maximum retries
+ * exceeded"), and commander never acknowledged MAV_CMD_COMPONENT_ARM_DISARM.
+ *
+ * Put sih just below the lowest of those consumers instead. dataman is
+ * SCHED_PRIORITY_DEFAULT - 10, so - 12 clears it while staying above
+ * SCHED_PRIORITY_PARAMS (- 15) which must remain the lowest PX4 tier. This
+ * preserves PX4's own relative ordering among the flight-stack tasks -- the
+ * alternative, lifting each of them above 180 one at a time, would invert it.
+ * sih is a periodic 200 Hz task whose consumers are event-driven and mostly
+ * idle, so it still gets the core essentially whenever it asks.
+ *
+ * Scoped to this board; every other SIH target keeps SCHED_PRIORITY_MAX.
+ * See also the priority map note for this board: everything that must respond
+ * to a GCS has to outrank sih, and nothing may outrank rptun. */
 #if defined(CONFIG_ZYNQR5_RPTUN)
-# define SIH_TASK_PRIORITY (CONFIG_RPTUN_PRIORITY - 44)
+# define SIH_TASK_PRIORITY (SCHED_PRIORITY_DEFAULT - 12)
 #else
 # define SIH_TASK_PRIORITY SCHED_PRIORITY_MAX
 #endif
