@@ -103,6 +103,20 @@ CONFIG_MODULES_LAND_DETECTOR=y
 # (all), or the logger also tries the file backend and fails on every write.
 # See rc.board_defaults.
 CONFIG_MODULES_LOGGER=y
+
+# CPU/RAM load monitoring.  load_mon publishes the cpuload topic, which is what
+# makes headroom visible instead of something you rediscover by hand:
+#   - commander's cpuResourceCheck refuses to arm above COM_CPU_MAX (default 95%,
+#     negative disables), so saturation is reported as itself rather than as the
+#     downstream estimator failure it causes;
+#   - logged_topics.cpp logs "cpuload" by default, so every flight log carries it;
+#   - SYS_STATUS.load carries it to QGroundControl live.
+#
+# This board ran into a fully saturated core -- sih's 200 Hz loop delivering
+# 87 Hz, idle task accumulating 7 ms -- and the only symptom the operator saw was
+# "Preflight Fail: vertical velocity unstable".  That check was silent purely
+# because nothing published cpuload.
+CONFIG_MODULES_LOAD_MON=y
 CONFIG_MODULES_RC_UPDATE=y
 CONFIG_MODULES_MANUAL_CONTROL=y
 CONFIG_MODULES_MC_RATE_CONTROL=y

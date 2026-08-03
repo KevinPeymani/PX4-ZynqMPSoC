@@ -109,6 +109,13 @@ CONFIG_SCHED_HPWORK=y
 # surfaced now because SIG_DEFAULT is what makes <nuttx/sched.h> declare
 # TSTATE_TASK_STOPPED, which print_load.cpp switches on unconditionally.
 CONFIG_SIG_DEFAULT=y
+
+# Must be 24 to match PX4's TaskStackInfo.msg, which declares
+# "char[24] task_name"; modules/load_mon has a static_assert on exactly this and
+# will not compile otherwise.  NuttX's own default is 31, and this board had been
+# leaving it there -- 176 of PX4's NuttX boards set 24.  Task names longer than
+# 23 characters are truncated, which none of PX4's are.
+CONFIG_TASK_NAME_SIZE=24
 CONFIG_SCHED_LPWORK=y
 CONFIG_SCHED_WAITPID=y
 CONFIG_SCHED_WORKQUEUE=y
@@ -140,9 +147,10 @@ CONFIG_SYSTEM_NSH_STACKSIZE=8192
 # Priority of the init task, i.e. nsh_main, i.e. the task that executes rcS.
 #
 # The NuttX default is 100, which assumes the startup script is the most
-# important thing running.  It is not on this board: simulator_sih runs at 180
-# on a single Cortex-R5 core, so nsh_main at 100 cannot resume between the
-# commands of its own script.  Raising the *builtins'* priority alone (see
+# important thing running.  It is not on this board: on a single Cortex-R5 core
+# nsh_main at 100 could not resume between the commands of its own script,
+# because simulator_sih was at 180 at the time (it has since moved to 88, below
+# the flight stack -- see SIH_TASK_PRIORITY in sih.cpp).  Raising the *builtins'* priority alone (see
 # PRIORITY_DEFAULT in cmake/px4_add_module.cmake) was measured NOT to be enough
 # precisely because of this: the spawned command completes, but the shell that
 # has to read the next line never gets scheduled again.

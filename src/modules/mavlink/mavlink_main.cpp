@@ -726,12 +726,24 @@ Mavlink::set_hil_enabled(bool hil_enabled)
 	/* enable HIL (only on links with sufficient bandwidth) */
 	if (hil_enabled && !_hil_enabled && _datarate > 5000) {
 		_hil_enabled = true;
-		ret = configure_stream("HIL_ACTUATOR_CONTROLS", 200.0f);
 
 		if (_param_sys_hitl.get() == 2) {		// Simulation in Hardware enabled ?
+			/* SIH computes the dynamics on the flight controller itself and
+			 * simulator_sih consumes actuator_outputs over uORB, so nothing is
+			 * listening to HIL_ACTUATOR_CONTROLS here -- unlike classic HITL,
+			 * where the external simulator needs it to drive its motors.  At
+			 * 200 Hz x 93 B it is 18.6 kB/s, which on a single-core target was
+			 * measured as ~59% of all MAVLink traffic and enough to starve the
+			 * 200 Hz sih loop down to 87 Hz, taking the estimator with it.
+			 * Keep the message available for inspection or an external
+			 * visualiser, but at a rate that costs nothing. */
+			ret = configure_stream("HIL_ACTUATOR_CONTROLS", 10.0f);
 			configure_stream("HIL_STATE_QUATERNION", 25.0f); // ground truth to display the SIH
 
 		} else {
+			/* Classic HITL: the external simulator drives its motors from this,
+			 * so it must stay at full rate. */
+			ret = configure_stream("HIL_ACTUATOR_CONTROLS", 200.0f);
 			configure_stream("HIL_STATE_QUATERNION", 0.0f);
 		}
 	}
