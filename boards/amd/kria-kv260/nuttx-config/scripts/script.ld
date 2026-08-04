@@ -59,6 +59,89 @@ SECTIONS
         KEEP(*(.tcm_vectors))
     } > atcm
 
+    /* Hot code relocated into ATCM.
+     *
+     * This R5F executes from external DDR with the MPU disabled (the boot stub
+     * in zynqr5_tcmstart.S clears SCTLR.M) and both caches off, so every
+     * instruction fetch from .text is an uncached DDR access.  The TCMs are the
+     * one memory on this part that is fast regardless: they are tightly coupled
+     * and zero-wait-state, and unlike DDR their latency does not depend on the
+     * MPU or the caches being configured.  That makes TCM placement worthwhile
+     * on its own, not merely a stand-in for enabling the caches.
+     *
+     * Only 104 B of the 64 KB ATCM was in use (.tcm_vectors), so the budget
+     * here is ~65 KB.  Keep this list to code that is hot *per call* rather
+     * than merely large; the win scales with call frequency, not size.
+     *
+     * Calls between here and DDR .text span ~490 MB, far beyond the ±32 MB
+     * reach of ARM's bl, so the linker synthesises long-branch veneers.  Those
+     * veneers live in DDR and are themselves fetched uncached, which is why a
+     * function is only worth moving if its body is longer than the single
+     * indirect branch a call now costs.
+     *
+     * Placed before .text so these input sections are claimed here rather than
+     * by the *(.text .text.*) wildcard below. */
+
+    .tcm_text : ALIGN(8)
+    {
+        _stcm_text = ABSOLUTE(.);
+
+        /* PX4 hrt: hrt_absolute_time() is called on essentially every uORB
+         * publish, perf counter and timeout check in the system.
+         * Measured alone: load 92.5% -> 90.9%, sih min cycle 518 -> 459 us. */
+        *hrt.c.obj(.text .text.*)
+
+        /* Ekf::predictCovariance(), 15 KB and the single largest term in the
+         * "ekf2: EKF update 2532 us avg" that costs ~30% of this core at
+         * 120 Hz.
+         *
+         * Named by its mangled section rather than by object file because
+         * ekf2 is a UNITY build: every EKF source lands in one
+         * modules__ekf2_unity.cpp.obj (~200 KB, far too big for ATCM), so
+         * *covariance.cpp.obj matches nothing in the final link even though
+         * that object exists on disk.  -ffunction-sections is what makes this
+         * granularity available; if the signature ever changes, this rule
+         * silently stops matching, so verify with:
+         *   arm-none-eabi-nm -C <elf> | grep predictCovariance
+         * and expect an ATCM (0x0000xxxx) address.
+         *
+         * The other ~130 KB of EKF math cannot fit here at any granularity.
+         * That ceiling is why the MPU/cache work matters more than this
+         * section does.
+         *
+         * WITHHELD pending bisect -- see the note below:
+         *   *(.text._ZN3Ekf17predictCovarianceERKN9estimator9imuSampleE)
+         */
+
+        /* BISECT: everything below is withheld pending a per-item test.
+         * Adding these five groups at once (sih.cpp, the two uORB objects, ten
+         * kernel objects, and predictCovariance) produced an R5 that loaded
+         * and reported "running" but never serviced rpmsg -- Linux logged
+         * repeated "Failed to kick remote" and the bridge saw
+         * r5->gcs 0 msgs while the uplink arrived normally.  ATCM was 50288 B
+         * of 65536, and both TCM banks are 0x10000 in the devicetree, so this
+         * was not a capacity overflow.  Re-add one group at a time; a board
+         * that only speaks through the transport this code brings up gives no
+         * other way to attribute the fault.
+         *
+         *   *sih.cpp.obj(.text .text.*)
+         *   *uORBDeviceNode.cpp.obj(.text .text.*)
+         *   *uORBManager.cpp.obj(.text .text.*)
+         *   *arm_doirq.o(.text .text.*)
+         *   *irq_dispatch.o(.text .text.*)
+         *   *arm_switchcontext.o(.text .text.*)
+         *   *sched_addreadytorun.o(.text .text.*)
+         *   *sched_removereadytorun.o(.text .text.*)
+         *   *sched_processtimer.o(.text .text.*)
+         *   *sched_resumescheduler.o(.text .text.*)
+         *   *sched_lock.o(.text .text.*)
+         *   *lib_memcpy.o(.text .text.*)
+         *   *lib_memset.o(.text .text.*)
+         */
+
+        _etcm_text = ABSOLUTE(.);
+    } > atcm
+
     /* DDR: NuttX vector table — target of the TCM trampoline at 0x0.
      * _vector_start and _vector_end are defined inside arm_vectortab.o
      * (armv7-r/arm_vectortab.S); do NOT redefine them here.  Redefining
@@ -125,11 +208,28 @@ SECTIONS
 
     /* Resource table consumed by Linux remoteproc to discover vrings.
      * KEEP() prevents --gc-sections from discarding the section; Linux
-     * finds it by ELF section name ".resource_table". */
+     * finds it by ELF section name ".resource_table".
+     *
+     * Aligned and padded to 1 KB so it can be given its own MPU region.
+     * Linux writes the RSC_VDEV status field here while this core polls it, so
+     * once the D-cache is on (CONFIG_ZYNQR5_DCACHE) this must be mapped
+     * non-cacheable -- otherwise the R5 can spin forever on a stale cached
+     * copy, which presents as a firmware that loads, reports "running", and
+     * never announces its rpmsg channels.
+     *
+     * An MPU region must be a power of two based on its own alignment, and
+     * this table is only 208 bytes: unaligned and mid-.data (it sat at
+     * 0x1EE60C58) it could not be carved out at all.  1 KB is the smallest
+     * convenient region that satisfies both rules.  The symbols are exported
+     * so zynqr5_start.c does not have to hardcode an address that moves
+     * whenever .data changes size. */
 
-    .resource_table :
+    .resource_table : ALIGN(1024)
     {
+        _sresource_table = ABSOLUTE(.);
         KEEP(*(.resource_table))
+        . = ALIGN(1024);
+        _eresource_table = ABSOLUTE(.);
     } > ddr
 
     .bss :
@@ -204,6 +304,13 @@ SECTIONS
      *   0x1EEFFF74  free (was: GIC/CPSR snapshots taken by rptun.c's spin
      *               loop -- removed, it read GICC_IAR from thread context and
      *               would steal interrupts from their real handlers)
+     *   0x1EEFFF78  0x5C71A5A5 magic: MPU/I-cache zynqr5_start.c
+     *               code ran on THIS boot (the scratchpad is never zeroed)
+     *   0x1EEFFF7C  SCTLR read back after enable  zynqr5_start.c
+     *               bit0 M, bit2 C (must be 0), bit12 I, bit17 BR
+     *               measured 0x00E71879 = MPU on, I-cache on, D-cache off
+     *   0x1EEFFF80  MPU regions programmed        zynqr5_start.c
+     *               (count << 16) | log2(size); 0x00020014 = 2 x 1 MB
      *   0x1EEFFF98  GICD_ISENABLER[2]             zynqr5_timerisr.c
      *   0x1EEFFF9C  GICD_ITARGETSR[17]            zynqr5_timerisr.c
      *   0x1EEFFFA0  GICD_TYPER                    zynqr5_irq.c
