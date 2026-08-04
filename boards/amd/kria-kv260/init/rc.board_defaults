@@ -50,7 +50,44 @@ param set-default SER_TEL1_BAUD 2000000
 param set-default MAV_0_MODE 5
 
 # MAV_0_RATE in B/s.  The default is 1200, which would undo the above.
-param set-default MAV_0_RATE 100000
+#
+# 16000, not the 100000 this link can physically carry, and the difference is
+# deliberate: -r declares a budget that update_rate_mult() polices demand
+# against, so declaring the theoretical capacity means PX4 never throttles and
+# the real constraint gets hit somewhere else.  Here that somewhere else was the
+# CPU.  Measured with the config profile at 100000: tx 31.5 kB/s with rate mult
+# 1.000 and zero tx errors -- no throttling at all -- while mavlink TX burned
+# ~3.0 ms per run at ~108 runs/s, about 32% of the core at priority 204, which
+# starved simulator_sih at 88 down to 105 Hz of an intended 200.
+#
+# Declaring roughly half the measured demand drives bandwidth_mult to about 0.5,
+# so every non-const stream halves proportionally and mavlink's per-run packing
+# work halves with it.  This is the traffic budget, not a capacity limit: raise
+# it if the core turns out to have headroom, lower it if sih still cannot make
+# rate.
+param set-default MAV_0_RATE 16000
+
+# Inner-loop rate, budgeted to what a single Cortex-R5 can actually sustain.
+#
+# simulator_sih takes its loop rate straight from this parameter
+# (Sih::realtime_loop: "int rate = _imu_gyro_ratemax.get()"), so the PX4 default
+# of 400 had sih asking for 400 Hz.  Measured achievement was 120 Hz, and the
+# core sat at 99.1% load -- so the request was never close to met, and the gap
+# showed up as jittery sensor timestamps, an accelerometer-bias estimate the EKF
+# could not reconcile, and "Preflight Fail: vertical velocity unstable" blocking
+# arming.
+#
+# This is the master rate for the whole chain, not just sih: it also sets the
+# gyro control publication rate and therefore the rate controller's inner loop,
+# so lowering it reduces work everywhere downstream rather than only in the
+# simulator.  That matters because the load is a closed loop -- freeing CPU lets
+# sih run faster, which creates more estimator and controller work, which
+# re-saturates the core.  Halving the telemetry budget alone only moved sih from
+# 105 to 120 Hz for exactly that reason.
+#
+# 200 Hz is also the floor sih can be asked for: it constrains the interval to
+# [500, 5000] us, so values below 200 are clamped and cannot buy anything.
+param set-default IMU_GYRO_RATEMAX 200
 
 # Airframe: SIH Quadcopter X (ROMFS/px4fmu_common/init.d/airframes/
 # 1100_rc_quad_x_sih.hil).  Without this, SYS_AUTOSTART is unset, rcS logs
