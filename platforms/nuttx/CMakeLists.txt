@@ -449,7 +449,19 @@ if (CONFIG_INTELHEX_BINARY)
 endif()
 
 # create .px4 with parameter and airframe metadata
-if (TARGET parameters_xml AND TARGET airframes_xml)
+#
+# The .px4 envelope exists so Tools/px_uploader.py can hand the image to a PX4
+# bootloader, which rejects an envelope whose board_id isn't the one it was
+# built for. A target that isn't loaded that way has no bootloader, no board_id
+# allocated in PX4's registry, and so ships no firmware.prototype: the KV260's
+# R5 is loaded by Linux remoteproc on the A53, straight from the ELF's program
+# headers. Treat a missing prototype as "this target has nothing to package"
+# rather than failing the build after a successful link. Expressing the opt-out
+# as the absence of a file matches the bootloader.bin and upload.cmake opt-ins
+# further down.
+set(fw_prototype ${PX4_BOARD_DIR}/firmware.prototype)
+
+if (TARGET parameters_xml AND TARGET airframes_xml AND EXISTS ${fw_prototype})
 
 	string(REPLACE ".elf" ".px4" fw_package ${PX4_BINARY_DIR}/${FW_NAME})
 
@@ -500,7 +512,7 @@ if (TARGET parameters_xml AND TARGET airframes_xml)
 		OUTPUT ${fw_package}
 		COMMAND
 			${PYTHON_EXECUTABLE} ${PX4_SOURCE_DIR}/Tools/px_mkfw.py
-				--prototype ${PX4_SOURCE_DIR}/boards/${PX4_BOARD_VENDOR}/${PX4_BOARD_MODEL}/firmware.prototype
+				--prototype ${fw_prototype}
 				--git_identity ${PX4_SOURCE_DIR}
 				--parameter_xml ${PX4_BINARY_DIR}/parameters.xml
 				--airframe_xml ${PX4_BINARY_DIR}/airframes.xml
@@ -522,6 +534,10 @@ if (TARGET parameters_xml AND TARGET airframes_xml)
 	if (CONFIG_CDCACM)
 		include(upload)
 	endif()
+
+elseif (TARGET parameters_xml AND TARGET airframes_xml)
+
+	message(STATUS "${PX4_BOARD}: no firmware.prototype, not packaging a .px4")
 
 endif()
 
