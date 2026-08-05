@@ -44,7 +44,28 @@ and looks like a real log. With the ack: 362 frames / 90 KB / 0 missing.
 whoever sent last, so a running QGroundControl and one of these scripts will
 fight over the downlink. Use a second `--udp-port` bridge instance, or stop QGC.
 
-## Known bug, open
+## Known bugs, open
+
+### rpmsgfs: a request in flight when the A53 daemon dies blocks for good
+
+Parameter storage degrades cleanly in every case we tested — daemon absent at
+boot (mount is probed and unmounted, parameters volatile, vehicle still flies),
+daemon killed while running (`param save` fails fast, vehicle still arms), and
+daemon restarted (re-binds with no R5 restart). The one case left open is a
+request that was **already in flight** at the moment the daemon died: that
+caller stays blocked permanently. The window is the ~1 ms a request is
+outstanding.
+
+Why it is not simply given a timeout: `rpmsgfs_send_recv()` publishes a pointer
+to the caller's *stack frame* to the remote before sending, so a wait that gives
+up lets that frame die while the pointer is still live on the far side — a
+restarted daemon would then write into a dead frame. The fix is to move that
+cookie off the stack into a per-mount pool that is never freed, plus null-guards
+in the response handlers. See the KNOWN LIMITATION comment at the
+`rpmsg_wait(&priv->ept, &cookie.sem)` in
+`platforms/nuttx/NuttX/nuttx/fs/rpmsgfs/rpmsgfs_client.c`.
+
+### R5→Linux wedges under sustained rpmsg throughput
 
 Sustained ULog streaming **wedges the R5→Linux direction** after roughly 10 s /
 360 frames / 90 KB. Signature: the bridge's `r5->gcs` counter freezes while

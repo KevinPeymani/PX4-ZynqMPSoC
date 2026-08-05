@@ -33,6 +33,9 @@
 
 add_library(drivers_board
 	init.c
+	# No code -- compile-time assertions pinning the rpmsgfs wire format this
+	# board shares with the A53's px4-rpmsgfs-server daemon.
+	rpmsgfs_wire.c
 )
 
 target_link_libraries(drivers_board

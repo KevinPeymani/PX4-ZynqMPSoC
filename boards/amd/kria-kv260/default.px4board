@@ -20,10 +20,31 @@ CONFIG_BOARD_ARCHITECTURE="cortex-r5"
 # it reports with NavModes::None so it never actually blocked arming -- it was
 # pure noise crowding out the real failures in QGroundControl's arming report.
 #
-# Setting this changes nothing else: it does not create storage, so parameters,
-# missions and calibration remain volatile (SYS_DM_BACKEND=1 keeps dataman in
-# RAM, and no MTD/flash param backend is wired), and MODULES_LOGGER is not built.
+# Setting this changes nothing else: it does not create storage.  Storage now
+# comes from somewhere else entirely -- see CONFIG_BOARD_PARAM_FILE below --
+# but this stays set, because what sdcardCheck looks for is still absent: there
+# is no card, no /dev/mmcsd0, and rcS's own STORAGE_AVAILABLE probe still finds
+# nothing.  Missions also remain in RAM (SYS_DM_BACKEND=1).
 CONFIG_BOARD_NO_SDCARD=y
+
+# Parameters and sensor calibration live on the A53's filesystem, reached over
+# rpmsg.  board_app_initialize() mounts NuttX's rpmsgfs client on
+# CONFIG_BOARD_ROOT_PATH (/fs/microsd, left at its default), and
+# px4-rpmsgfs-server on the Linux side serves /var/lib/px4 from the rootfs.
+#
+# The default here is /fs/mtd_params, an MTD partition this board does not have,
+# so `param select` was pointing at a path no filesystem backed: every boot
+# logged "parameter storage empty, initializing" and calibration was lost on
+# every restart.  The stopgap was the mavlink bridge snooping PARAM_SET/CAL_*
+# off the telemetry stream and replaying it 30 s after boot; pointing this at
+# the mount retires that entirely and makes `param save` work through PX4's
+# ordinary file path.
+#
+# Traffic is bounded and bursty by design: a save is one open/write/close of a
+# few kB, not a stream, which matters because sustained R5->Linux rpmsg traffic
+# has an open wedging bug at ~90 kB.  File-backed ULog is deliberately NOT
+# enabled for that reason (SDLOG_BACKEND stays 2, mavlink-only).
+CONFIG_BOARD_PARAM_FILE="/fs/microsd/parameters.bson"
 
 # Serial port assignments
 # UART0 (0xFF000000) is NSH console — electrically dead on this carrier

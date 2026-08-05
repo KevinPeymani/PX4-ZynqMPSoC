@@ -17,15 +17,18 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <syslog.h>
 #include <unistd.h>
 
 #include <arch/board/board.h>
 #include <nuttx/board.h>
 #include <nuttx/config.h>
+#include <nuttx/fs/fs.h>
 #include <nuttx/mm/mm.h>
 
 #include <drivers/drv_board_led.h>
+#include <px4_platform_common/defines.h>
 #include <px4_platform_common/init.h>
 
 /* RSC_TRACE log ring, defined alongside the resource table in
@@ -450,6 +453,105 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 		}
 	}
 
+#endif
+
+#if defined(CONFIG_FS_RPMSGFS) && defined(CONFIG_ZYNQR5_RPTUN)
+	/* Real, file-backed storage for parameters and sensor calibration.
+	 *
+	 * The R5 has no storage of its own, so PX4's parameter store was volatile:
+	 * every boot logged "parameter storage empty, initializing" and calibration
+	 * had to be redone.  The stopgap was the A53 mavlink bridge snooping
+	 * PARAM_SET/CAL_* off the MAVLink stream and replaying it ~30 s after boot,
+	 * which only ever captured what happened to cross MAVLink.
+	 *
+	 * rpmsgfs (fs/rpmsgfs) forwards POSIX file operations over the rpmsg link
+	 * that already carries MAVLink, and px4-rpmsgfs-server on the A53 (see the
+	 * Petalinux repo) executes them against a real directory on the Linux
+	 * rootfs.  Mounting it on PX4_STORAGEDIR is all it takes for `param save`
+	 * and `param load` to work through their ordinary path -- nothing in PX4
+	 * needs a board-specific case.
+	 *
+	 * Three things about the placement of this call are load-bearing:
+	 *
+	 *   - It must come *after* uart_rpmsg_init() above.  Endpoint addresses are
+	 *     handed out sequentially from 0x400 and the rpmsgfs client claims one
+	 *     as soon as it binds, so mounting first would shift MAVLink off the
+	 *     0x401 the Linux bridge hardcodes.  This lands on 0x402.
+	 *
+	 *   - It must be here, in board_app_initialize(), not in rcS.  rcS's own
+	 *     `param select` is the first thing to touch the mount, so the mount has
+	 *     to exist before boardctl(BOARDIOC_INIT) returns.
+	 *
+	 *   - It costs nothing if the A53 daemon is not up.  rpmsgfs_bind() never
+	 *     talks to the remote; only the first path operation does.  timeout= is
+	 *     that operation's retry budget, in 10 ms units, so timeout=100 is ten
+	 *     attempts -- and each attempt costs one
+	 *     CONFIG_FS_RPMSGFS_BIND_TIMEOUT_MS (250 ms), for about 2.6 s of
+	 *     one-time delay with no server at all.  The two numbers have to be
+	 *     sized together; see the defconfig comment for why the obvious pairing
+	 *     is five minutes.  The outcome without a server is volatile parameters,
+	 *     which is the old behaviour, not a boot that never finishes.
+	 *
+	 * No new shared-memory region is involved: every rpmsgfs message travels in
+	 * the existing rpmsg buffer pool, which zynqr5_cache_enable() already maps
+	 * Strongly-Ordered.  Nothing in the rptun path does cache maintenance, so
+	 * anything that did need its own region would have to be added there.
+	 */
+	{
+		/* Served by px4-rpmsgfs-server on the A53.  Its systemd unit creates
+		 * this directory; keep the two in step. */
+		static const char *const opts = "fs=/var/lib/px4,cpu=a53,timeout=100";
+		int ret = nx_mount(NULL, PX4_STORAGEDIR, "rpmsgfs", 0, opts);
+
+		if (ret < 0) {
+			dprintf(2, "[boot] rpmsgfs mount of %s failed (%d): parameters will not persist\n",
+				PX4_STORAGEDIR, ret);
+
+		} else {
+			/* Prove the A53 server is actually there, and unmount if it is not.
+			 *
+			 * rpmsgfs_bind() never contacts the remote, so a successful mount
+			 * says nothing about whether anything is listening.  Leaving a
+			 * mount that can never answer is what broke the "daemon stopped"
+			 * case on hardware: rcS then drove PX4's parameter storage through
+			 * a filesystem whose every operation failed, and the flight stack
+			 * died with a data abort in the heap allocator.
+			 *
+			 * Do it as one bounded probe here instead, because "there is no
+			 * storage" is a state this board has always handled correctly: an
+			 * unmounted PX4_STORAGEDIR gives PX4 exactly the ENOENT it saw for
+			 * months before rpmsgfs existed, so `param load-or-init` reports an
+			 * empty store, uses firmware defaults, and boot completes.  That
+			 * matters more than salvaging a late-starting daemon -- reaching a
+			 * flyable state must not depend on A53 userspace.  (If the daemon
+			 * is started late, restart the R5 to pick up storage.)
+			 *
+			 * The probe deliberately targets a name that does not exist.  A
+			 * live server answers -ENOENT, which is a *successful* round trip;
+			 * a missing one cannot answer at all and fails the transport.  Both
+			 * outcomes are distinguishable only because rpmsgfs_open()/stat()
+			 * now report the server's real errno -- upstream collapsed every
+			 * failure to -EBADF, which also made a first boot with no
+			 * parameters.bson yet look like a corrupt store to PX4.
+			 *
+			 * statfs() would be the tidier probe but cannot be used: rpmsgfs
+			 * caches it and, before the fix in this tree, stamped its magic
+			 * even on failure, so it reports success forever afterwards.
+			 */
+			struct stat st;
+
+			ret = nx_stat(PX4_STORAGEDIR "/.rpmsgfs-probe", &st, 1);
+
+			if (ret == 0 || ret == -ENOENT) {
+				dprintf(1, "[boot] rpmsgfs: %s <- a53:/var/lib/px4\n", PX4_STORAGEDIR);
+
+			} else {
+				nx_umount2(PX4_STORAGEDIR, 0);
+				dprintf(2, "[boot] rpmsgfs: no A53 server (%d); %s unmounted, "
+					"parameters are volatile this boot\n", ret, PX4_STORAGEDIR);
+			}
+		}
+	}
 #endif
 
 	/* mavlink is intentionally NOT started here either -- rc.serial starts it,

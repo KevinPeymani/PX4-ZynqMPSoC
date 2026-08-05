@@ -73,6 +73,48 @@ CONFIG_FS_PROCFS_REGISTER=y
 CONFIG_FS_ROMFS=y
 CONFIG_FS_CROMFS=y
 
+# The R5 has no storage of its own, so parameters and sensor calibration were
+# volatile: every boot logged "parameter storage empty, initializing".  rpmsgfs
+# (fs/rpmsgfs) forwards POSIX file operations over the rpmsg link already in
+# use for MAVLink, and a Linux-side daemon on the A53 executes them against a
+# real directory -- see the px4-rpmsgfs-server recipe in the Petalinux repo.
+# board_app_initialize() mounts it on ${BOARD_ROOT_PATH} (/fs/microsd), which
+# is where CONFIG_BOARD_PARAM_FILE now points, so `param save` / `param load`
+# work through PX4's ordinary path with nothing board-specific in PX4 itself.
+#
+# This adds no shared-memory region: rpmsgfs messages live in the existing
+# rpmsg buffer pool, which zynqr5_cache_enable() already maps
+# Strongly-Ordered, so the cache maintenance that nothing in the rptun path
+# performs is not needed here either.
+CONFIG_FS_RPMSGFS=y
+
+# Bound the wait for the A53 server to bind our endpoint (decimal: CONFIG ints
+# parse a hex value as 0 -- CONFIG_RAM_SIZE has the same trap).
+#
+# Upstream's default of 0 waits forever, and that wait is uninterruptible and on
+# the boot path: rcS stats ${BOARD_ROOT_PATH}/etc/rc.txt and then runs `param
+# select` before anything else touches the mount, so with the A53 daemon
+# stopped, crashed, or simply not deployed yet, PX4 would never reach commander
+# and the board would look dead.
+#
+# This value is one *attempt*.  The total budget is the mount's own "timeout="
+# option, and the two have to be sized together, which is not obvious: mkpath()
+# retries a probe stat() in RPMSGFS_RETRY_DELAY_MS (10 ms) units and subtracts
+# only that 10 ms per attempt, while each failed attempt now actually costs a
+# whole bind timeout.  So "timeout=" is effectively an attempt count x10, and
+# the wall-clock cost is (timeout/10) x (this value + 10 ms).  With 250 ms here
+# and timeout=100 in the mount call, a missing server costs 10 attempts and
+# about 2.6 s of one-time boot delay -- after which parameters fall back to
+# firmware defaults and boot continues, i.e. exactly the pre-rpmsgfs behaviour
+# rather than a hang.  Paired the other way round (1000 ms here, timeout=3000)
+# it would have been 300 attempts and five minutes.
+#
+# Spending the budget is not permanent, either: it only abandons the readiness
+# probe.  The bind semaphore is posted for good once the server does announce,
+# so a daemon that comes up late still gives a working mount -- `param save`
+# from the shell then works even though the boot-time load did not.
+CONFIG_FS_RPMSGFS_BIND_TIMEOUT_MS=250
+
 # Mount the built-in ROMFS at /etc and run it at boot (rc.sysinit + rcS).
 # Without this, nsh_main() never sources /etc/init.d/rcS — discovered
 # 2026-07-21 while bringing up simulator_sih: the board booted and rpmsg
