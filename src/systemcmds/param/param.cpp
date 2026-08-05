@@ -579,7 +579,12 @@ do_load_or_init(const char *backup_file_name)
 
 	int fd = -1;
 
-	if (backup_file_name) {
+	/* An empty name means "no backup", not "a backup called ''".  rcS passes
+	 * $PARAM_BACKUP_FILE unquoted-but-empty on every board where storage is
+	 * unavailable, and open("") fails with something other than ENOENT (ENXIO on
+	 * NuttX), which used to be reported as an unreadable backup and abort the
+	 * initialization of a blank store before it could be persisted. */
+	if (backup_file_name && backup_file_name[0] != '\0') {
 		fd = open(backup_file_name, O_RDONLY);
 
 		if (fd < 0 && errno != ENOENT) {
