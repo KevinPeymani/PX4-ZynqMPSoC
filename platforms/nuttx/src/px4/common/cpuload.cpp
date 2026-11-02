@@ -85,32 +85,26 @@ void cpuload_monitor_stop()
 	}
 }
 
+static void cpuload_add_task(FAR struct tcb_s *tcb, FAR void *)
+{
+	if (system_load.total_count < CONFIG_FS_PROCFS_MAX_TASKS) {
+		system_load_taskinfo_s &task = system_load.tasks[system_load.total_count++];
+		task.total_runtime = 0;
+		task.curr_start_time = 0;
+		task.tcb = tcb;
+		task.valid = true;
+	}
+}
+
 void cpuload_initialize_once()
 {
 	for (auto &task : system_load.tasks) {
 		task.valid = false;
 	}
 
-	int static_tasks_count = 2;	// there are at least 2 threads that should be initialized statically - "idle" and "init"
-
-#ifdef CONFIG_PAGING
-	static_tasks_count++;	// include paging thread in initialization
-#endif /* CONFIG_PAGING */
-#if CONFIG_SCHED_WORKQUEUE
-	static_tasks_count++;	// include high priority work0 thread in initialization
-#endif /* CONFIG_SCHED_WORKQUEUE */
-#if CONFIG_SCHED_LPWORK
-	static_tasks_count++;	// include low priority work1 thread in initialization
-#endif /* CONFIG_SCHED_WORKQUEUE */
-
-	// perform static initialization of "system" threads
-	for (system_load.total_count = 0; system_load.total_count < static_tasks_count; system_load.total_count++) {
-		system_load.tasks[system_load.total_count].total_runtime = 0;
-		system_load.tasks[system_load.total_count].curr_start_time = 0;
-		system_load.tasks[system_load.total_count].tcb = nxsched_get_tcb(
-					system_load.total_count);	// it is assumed that these static threads have consecutive PIDs
-		system_load.tasks[system_load.total_count].valid = true;
-	}
+	// track every thread that already exists, whatever its PID
+	system_load.total_count = 0;
+	nxsched_foreach(cpuload_add_task, nullptr);
 
 	system_load.initialized = true;
 }
