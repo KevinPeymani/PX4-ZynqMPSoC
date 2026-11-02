@@ -137,6 +137,11 @@ if(CONFIG_NET)
 	target_link_libraries(nuttx_fs INTERFACE nuttx_net)
 endif()
 
+if(CONFIG_OPENAMP)
+	list(APPEND nuttx_libs nuttx_openamp)
+	target_link_libraries(nuttx_drivers INTERFACE nuttx_openamp)
+endif()
+
 file(RELATIVE_PATH PX4_BINARY_DIR_REL ${CMAKE_CURRENT_BINARY_DIR} ${PX4_BINARY_DIR})
 
 # only in the cygwin environment: convert absolute linker script path to mixed windows (C:/...)
@@ -362,11 +367,13 @@ else()
 	target_link_libraries(nuttx_xx INTERFACE nuttx_c)
 	target_link_libraries(nuttx_fs INTERFACE nuttx_c nuttx_mm)
 
-	# RISC-V chips build their startup code as a head object next to libarch,
-	# not into it (see platforms/nuttx/NuttX/CMakeLists.txt).
+	# RISC-V and ARMv7-R build their startup code as a head object next to
+	# libarch, not into it (see platforms/nuttx/NuttX/CMakeLists.txt).
 	set(NUTTX_HEAD_OBJS)
 	if(CONFIG_ARCH_RISCV)
 		set(NUTTX_HEAD_OBJS ${NUTTX_DIR}/arch/risc-v/src/${CONFIG_ARCH_CHIP}_head.o)
+	elseif(CONFIG_ARCH_ARMV7R)
+		set(NUTTX_HEAD_OBJS ${NUTTX_DIR}/arch/arm/src/arm_vectortab.o)
 	endif()
 
 	target_link_libraries(px4 PRIVATE

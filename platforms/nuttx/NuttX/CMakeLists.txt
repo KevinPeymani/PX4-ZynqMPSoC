@@ -232,6 +232,8 @@ else()
 		# The arch make also builds the RISC-V startup code, as a head object
 		# next to libarch; platforms/nuttx/CMakeLists.txt links it.
 		set(nuttx_arch_byproducts ${NUTTX_DIR}/arch/risc-v/src/${CONFIG_ARCH_CHIP}_head.o)
+	elseif(CONFIG_ARCH_ARMV7R)
+		set(nuttx_arch_byproducts ${NUTTX_DIR}/arch/arm/src/arm_vectortab.o)
 	endif()
 	add_nuttx_dir(arch arch/${CONFIG_ARCH}/src y -D__KERNEL__ all)
 	add_nuttx_dir(c libs/libc n "" all)
@@ -240,6 +242,10 @@ endif()
 
 if(CONFIG_NET)
 	add_nuttx_dir(net net y -D__KERNEL__ all)
+endif()
+
+if(CONFIG_OPENAMP)
+	add_nuttx_dir(openamp openamp y -D__KERNEL__ all)
 endif()
 
 ###############################################################################
