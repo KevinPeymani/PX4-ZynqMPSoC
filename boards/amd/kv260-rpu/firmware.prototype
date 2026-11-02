@@ -1,0 +1,13 @@
+{
+    "board_id": 161,
+    "magic": "PX4FWv1",
+    "description": "Firmware for the AMD KV260 Cortex-R5 RPU",
+    "image": "",
+    "build_time": 0,
+    "summary": "AMD KV260 RPU",
+    "version": "0.1",
+    "image_size": 0,
+    "image_maxsize": 33554432,
+    "git_identity": "",
+    "board_revision": 0
+}

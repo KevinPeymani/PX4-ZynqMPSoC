@@ -1,0 +1,7 @@
+#!/bin/sh
+#
+# AMD KV260 RPU specific board defaults
+#------------------------------------------------------------------------------
+
+# No power supply monitoring
+param set-default CBRK_SUPPLY_CHK 894281
