@@ -1,0 +1,7 @@
+#!/bin/sh
+#
+# AMD KV260 RPU specific board MAVLink startup script.
+#------------------------------------------------------------------------------
+
+# HITL link to the simulator over RPMsg (HIL streams need more than 5000 B/s)
+mavlink start -d /dev/ttyRPMSG1 -r 100000

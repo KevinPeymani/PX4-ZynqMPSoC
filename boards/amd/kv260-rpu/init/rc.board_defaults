@@ -5,3 +5,9 @@
 
 # No power supply monitoring
 param set-default CBRK_SUPPLY_CHK 894281
+
+# HIL quad X airframe, sets SYS_HITL 1
+param set-default SYS_AUTOSTART 1001
+
+# Dataman in RAM, since there is no storage
+param set-default SYS_DM_BACKEND 1

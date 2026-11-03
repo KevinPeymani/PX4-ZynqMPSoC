@@ -55,11 +55,12 @@ void zynqmp_rpu_board_initialize(void)
 {
 }
 
-/* Called by drivers_initialize(): registers the /dev/ttyRPMSG0 console */
+/* Called by drivers_initialize(): registers the /dev/ttyRPMSG0 console and the /dev/ttyRPMSG1 MAVLink link */
 
 void rpmsg_serialrawinit(void)
 {
 	uart_rpmsg_raw_init("linux", "RPMSG0", 4096, true);
+	uart_rpmsg_raw_init("linux", "RPMSG1", 4096, false);
 }
 
 /* Starts the RPMsg link after the work queues and before NSH opens the RPMsg console */
