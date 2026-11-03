@@ -133,6 +133,12 @@ config BOARD_TESTING
         flag to enable automatic inclusion of PX4 testing modules
 
 
+config BOARD_DEBUG_INIT
+    bool "Log the platform init steps"
+    default n
+    help
+        Log each step of px4_platform_init() to syslog, to locate a hang during boot.
+
 config BOARD_ETHERNET
     bool "Ethernet"
     help

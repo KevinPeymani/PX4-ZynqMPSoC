@@ -49,6 +49,12 @@
 #include <sys/mount.h>
 #include <syslog.h>
 
+#if defined(CONFIG_BOARD_DEBUG_INIT)
+#  define INIT_STEP(name) syslog(LOG_INFO, "[init] " name "\n")
+#else
+#  define INIT_STEP(name)
+#endif
+
 #if defined(CONFIG_I2C)
 # include <px4_platform_common/i2c.h>
 # include <nuttx/i2c/i2c_master.h>
@@ -124,6 +130,7 @@ int px4_platform_init()
 	kernel_ioctl_initialize();
 #endif
 
+	INIT_STEP("console_buffer_init");
 	int ret = px4_console_buffer_init();
 
 	if (ret < 0) {
@@ -143,6 +150,7 @@ int px4_platform_init()
 	PX4Crypto::px4_crypto_init();
 #endif
 
+	INIT_STEP("hrt_init");
 	hrt_init();
 
 #if !defined(CONFIG_BUILD_FLAT)
@@ -152,6 +160,7 @@ int px4_platform_init()
 
 	/* configure CPU load estimation */
 #ifdef CONFIG_SCHED_INSTRUMENTATION
+	INIT_STEP("cpuload");
 	cpuload_initialize_once();
 #endif
 
@@ -178,19 +187,25 @@ int px4_platform_init()
 
 #endif // CONFIG_FS_BINFS
 
+	INIT_STEP("wq manager");
 	px4::WorkQueueManagerStart();
 
+	INIT_STEP("param_init");
 	param_init();
 
+	INIT_STEP("uorb_start");
 	uorb_start();
 
+	INIT_STEP("log_init");
 	px4_log_initialize();
+	INIT_STEP("platform_init done");
 
 	return PX4_OK;
 }
 
 int px4_platform_configure(void)
 {
+	INIT_STEP("mft_configure");
 	return px4_mft_configure(board_get_manifest());
 
 }
