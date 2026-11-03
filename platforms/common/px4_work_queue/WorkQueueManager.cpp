@@ -98,6 +98,13 @@ FindWorkQueueByName(const char *name)
 	return nullptr;
 }
 
+#if defined(CONFIG_BOARD_DEBUG_INIT)
+#include <syslog.h>
+#define DBG_TMP(...) syslog(LOG_INFO, __VA_ARGS__)
+#else
+#define DBG_TMP(...)
+#endif
+
 WorkQueue *
 WorkQueueFindOrCreate(const wq_config_t &new_wq)
 {
@@ -113,7 +120,9 @@ WorkQueueFindOrCreate(const wq_config_t &new_wq)
 	if (wq == nullptr) {
 		// add WQ config to list
 		//  main thread wakes up, creates the thread
+		DBG_TMP("[tmp] wq push %s\n", new_wq.name);
 		_wq_manager_create_queue->push(&new_wq);
+		DBG_TMP("[tmp] wq pushed\n");
 
 		// we wait until new wq is created, then return
 		uint64_t t = 0;
@@ -122,6 +131,8 @@ WorkQueueFindOrCreate(const wq_config_t &new_wq)
 			// Wait up to 10 seconds, checking every 1 ms
 			t += 1_ms;
 			px4_usleep(1_ms);
+
+			if ((t % 1_s) == 0) { DBG_TMP("[tmp] wq wait %u ms\n", (unsigned)(t / 1000)); }
 
 			wq = FindWorkQueueByName(new_wq.name);
 		}
@@ -280,6 +291,7 @@ WorkQueueManagerRun(int, char **)
 		const wq_config_t *wq = _wq_manager_create_queue->pop();
 
 		if (wq != nullptr) {
+			DBG_TMP("[tmp] mgr create %s\n", wq->name);
 			// create new work queue
 
 			// stack size
@@ -336,6 +348,7 @@ WorkQueueManagerRun(int, char **)
 			// create thread
 			pthread_t thread;
 			int ret_create = pthread_create(&thread, &attr, WorkQueueRunner, (void *)wq);
+			DBG_TMP("[tmp] mgr created %d\n", ret_create);
 
 			if (ret_create == 0) {
 				PX4_DEBUG("starting: %s, priority: %d, stack: %zu bytes", wq->name, param.sched_priority, stacksize);

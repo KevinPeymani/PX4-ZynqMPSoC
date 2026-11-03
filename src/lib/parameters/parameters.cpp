@@ -136,6 +136,13 @@ static pthread_mutex_t file_mutex  =
 # include "parameters_remote.h"
 #endif // CONFIG_PARAM_REMOTE
 
+#if defined(CONFIG_BOARD_DEBUG_INIT)
+#include <syslog.h>
+#define DBG_TMP(...) syslog(LOG_INFO, __VA_ARGS__)
+#else
+#define DBG_TMP(...)
+#endif
+
 void
 param_init()
 {
@@ -162,7 +169,9 @@ param_init()
 #endif // CONFIG_PARAM_REMOTE
 
 #if not defined(CONFIG_PARAM_REMOTE)
+	DBG_TMP("[tmp] autosave new\n");
 	autosave_instance = new ParamAutosave();
+	DBG_TMP("[tmp] autosave done\n");
 #endif
 }
 
