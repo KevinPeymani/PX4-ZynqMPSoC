@@ -1,3 +1,8 @@
+> [!CAUTION]
+> **STALE AND DANGEROUS CODE — DO NOT USE.**
+> The `zynq-mpsoc` branch is an abandoned, unmaintained attempt at a Kria KV260 R5 port. It is known to be wrong in places and is not safe to build, flash or fly. It is kept only for reference.
+> The maintained port is the `kv260-rpu` branch of this repository (board `boards/amd/kv260-rpu`).
+
 <p align="center">
   <a href="https://px4.io">
     <img src="docs/assets/site/px4_logo.svg" alt="PX4 Autopilot" width="240">
